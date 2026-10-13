@@ -1,0 +1,90 @@
+version = 1
+name = "wpaperd"
+
+[setup]
+script = '''
+bash -c '
+set -Eeuo pipefail
+cd "${CODEX_WORKTREE_PATH:-$PWD}"
+if [[ "$(uname -s)" != Linux ]]; then
+  printf "%s\n" "wpaperd requires Linux and Wayland development libraries." >&2
+  exit 1
+fi
+for tool in cargo rustc cc pkg-config; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    printf "Missing build dependency: %s\n" "$tool" >&2
+    exit 1
+  fi
+done
+if ! pkg-config --exists egl wayland-client wayland-egl; then
+  printf "%s\n" "Install the EGL and Wayland development libraries for your distribution." >&2
+  exit 1
+fi
+if ! cargo fmt --version; then
+  printf "%s\n" "Install rustfmt for the active Rust toolchain." >&2
+  exit 1
+fi
+if ! cargo clippy --version; then
+  printf "%s\n" "Install Clippy for the active Rust toolchain." >&2
+  exit 1
+fi
+cargo fetch --locked
+printf "%s\n" "wpaperd development environment ready."
+'
+'''
+
+# Default features match normal builds. AVIF additionally needs libdav1d.
+[[actions]]
+name = "Check"
+icon = "check"
+command = '''
+bash -c '
+set -Eeuo pipefail
+cd "${CODEX_WORKTREE_PATH:-$PWD}"
+cargo check --workspace --locked
+'
+'''
+
+[[actions]]
+name = "Build"
+icon = "build"
+command = '''
+bash -c '
+set -Eeuo pipefail
+cd "${CODEX_WORKTREE_PATH:-$PWD}"
+cargo build --workspace --locked
+'
+'''
+
+[[actions]]
+name = "Test"
+icon = "test"
+command = '''
+bash -c '
+set -Eeuo pipefail
+cd "${CODEX_WORKTREE_PATH:-$PWD}"
+cargo test --workspace --locked
+'
+'''
+
+[[actions]]
+name = "Format check"
+icon = "check"
+command = '''
+bash -c '
+set -Eeuo pipefail
+cd "${CODEX_WORKTREE_PATH:-$PWD}"
+cargo fmt --all -- --check
+'
+'''
+
+[[actions]]
+name = "Clippy"
+icon = "debug"
+command = '''
+bash -c '
+set -Eeuo pipefail
+cd "${CODEX_WORKTREE_PATH:-$PWD}"
+cargo clippy --workspace --all-targets --locked
+'
+'''
