@@ -64,6 +64,39 @@ pub enum EventSource {
     Paused(Duration),
 }
 
+/// A timer already ready in this dispatch must not select an image behind a scene.
+fn hold_due_scene_timer(source: &mut EventSource, scene_owned: bool) -> bool {
+    if !scene_owned {
+        return false;
+    }
+    if let EventSource::Running(_, duration, instant) = *source {
+        *source =
+            EventSource::Paused(remaining_duration(duration, instant).unwrap_or(Duration::ZERO));
+    }
+    true
+}
+
+fn held_duration_after_reload(
+    source: &EventSource,
+    old_duration: Option<Duration>,
+    new_duration: Option<Duration>,
+    path_changed: bool,
+    now: Instant,
+) -> Option<Duration> {
+    let elapsed = if path_changed {
+        Duration::ZERO
+    } else {
+        match (old_duration, source) {
+            (Some(full), EventSource::Paused(left)) => full.saturating_sub(*left),
+            (Some(full), EventSource::Running(_, left, since)) => full
+                .saturating_sub(*left)
+                .saturating_add(now.saturating_duration_since(*since)),
+            _ => Duration::ZERO,
+        }
+    };
+    new_duration.map(|duration| duration.saturating_sub(elapsed))
+}
+
 /// Count existing callbacks so scene commands can coalesce requests and drain old still chains.
 #[derive(Default)]
 struct FrameRequests {
@@ -369,7 +402,11 @@ impl Surface {
     // Returns true when it is loaded, false when we need to wait
     // Call surface::frame when this return false
     pub fn load_wallpaper(&mut self) -> Result<bool> {
-        if self.motion_active() {
+        if self.motion_active()
+            || (self.motion_owned()
+                && self.loading_image.is_none()
+                && !self.image_picker.current_image().as_os_str().is_empty())
+        {
             return Ok(true);
         }
         // If we were not already trying to load an image
@@ -701,6 +738,23 @@ impl Surface {
         path_changed: bool,
     ) {
         if self.wallpaper_info.duration != wallpaper_info.duration {
+            if self.motion_owned() {
+                let remaining = held_duration_after_reload(
+                    &self.event_source,
+                    wallpaper_info.duration,
+                    self.wallpaper_info.duration,
+                    path_changed,
+                    Instant::now(),
+                );
+                if let EventSource::Running(token, _, _) = self.event_source {
+                    handle.remove(token);
+                }
+                self.event_source = remaining
+                    .map(EventSource::Paused)
+                    .unwrap_or(EventSource::NotSet);
+                // An exhausted timer remains held at zero; mode-off performs navigation.
+                return;
+            }
             match (self.wallpaper_info.duration, wallpaper_info.duration) {
                 (None, None) => {
                     unreachable!()
@@ -777,7 +831,7 @@ impl Surface {
     /// Add a new timer in the event_loop for the current duration
     /// Stop if there is already a timer added
     pub fn add_timer(&mut self, handle: &LoopHandle<Wpaperd>, duration_left: Option<Duration>) {
-        if self.motion_active() {
+        if self.motion_owned() {
             return;
         }
         // Timer is already running
@@ -813,6 +867,10 @@ impl Surface {
                         }
                     };
 
+                    let scene_owned = surface.motion_owned();
+                    if hold_due_scene_timer(&mut surface.event_source, scene_owned) {
+                        return TimeoutAction::Drop;
+                    }
                     // get duration from self.event_source
                     match surface.event_source {
                         EventSource::Running(_, _, _)
@@ -866,7 +924,7 @@ impl Surface {
     /// timer when resuming.
     pub fn handle_pause_state(&mut self, handle: &LoopHandle<Wpaperd>) {
         match (
-            self.pause_reason.is_some() || self.motion_active(),
+            self.pause_reason.is_some() || self.motion_owned(),
             &self.event_source,
         ) {
             // Should pause, but timer is still currently running
@@ -895,11 +953,7 @@ impl Surface {
     }
 
     fn request_frame(&mut self, qh: &QueueHandle<Wpaperd>) {
-        let scene_owned = self
-            .motion
-            .borrow()
-            .as_ref()
-            .is_some_and(|p| p.outputs.iter().any(|o| o.output == self.name()));
+        let scene_owned = self.motion_owned();
         if self.frame_requests.request(scene_owned) {
             self.wl_surface.frame(qh, self.wl_surface.clone());
         }
@@ -984,8 +1038,12 @@ impl Surface {
     }
 
     pub fn status(&self) -> &'static str {
-        if self.motion_active() {
-            return "motion";
+        if self.motion_owned() {
+            return if self.motion_active() {
+                "motion"
+            } else {
+                "fallback"
+            };
         }
         if self.wallpaper_info.path.is_dir() {
             if self.pause_reason.is_some() {
@@ -1118,6 +1176,9 @@ impl Surface {
             p.failure.is_none() && p.outputs.iter().any(|o| o.output == self.name())
         })
     }
+    pub fn motion_owned(&self) -> bool {
+        crate::scene::owns_output(&self.motion, self.name())
+    }
     pub fn ensure_timer(&mut self, handle: &LoopHandle<Wpaperd>) {
         if matches!(self.event_source, EventSource::NotSet) {
             self.add_timer(handle, None);
@@ -1130,7 +1191,14 @@ impl Surface {
                 context.renderer.transition_finished();
             }
         }
-        self.load_new_wallpaper();
+        // The still textures and picker are retained while a scene is active. Poll only an
+        // already selected load: running the picker again would replace a forced wallpaper
+        // and consume its detour state even when no new image is needed. A load completion
+        // notification may have arrived during scene mode, so resume it explicitly here.
+        if self.loading_image.is_some() || self.image_picker.current_image().as_os_str().is_empty()
+        {
+            self.load_new_wallpaper();
+        }
         self.queue_draw(qh);
     }
     pub fn prepare_motion(&mut self, scene: &crate::scene::Scene) -> Result<()> {
@@ -1189,8 +1257,95 @@ fn remaining_duration(duration: Duration, image_changed: Instant) -> Option<Dura
 
 #[cfg(test)]
 mod frame_tests {
-    use super::{draw_bound_scene, FrameRequests, SceneDrawFailure};
+    use super::{
+        draw_bound_scene, held_duration_after_reload, hold_due_scene_timer, EventSource,
+        FrameRequests, SceneDrawFailure,
+    };
+    use smithay_client_toolkit::reexports::calloop::{
+        timer::{TimeoutAction, Timer},
+        EventLoop,
+    };
     use std::collections::{BTreeMap, BTreeSet};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn scene_duration_reload_handles_unset_and_exhausted_held_timers() {
+        let now = Instant::now();
+        let seconds = Duration::from_secs;
+        let mut source = EventSource::NotSet;
+        let left =
+            held_duration_after_reload(&source, None, Some(seconds(10)), false, now).unwrap();
+        assert_eq!(left, seconds(10));
+        source = EventSource::Paused(left);
+        let left =
+            held_duration_after_reload(&source, Some(seconds(10)), Some(seconds(20)), false, now)
+                .unwrap();
+        assert_eq!(left, seconds(20));
+        source = EventSource::Paused(seconds(7));
+        assert_eq!(
+            held_duration_after_reload(&source, Some(seconds(10)), Some(seconds(2)), false, now),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(
+            held_duration_after_reload(&source, Some(seconds(10)), Some(seconds(20)), false, now),
+            Some(seconds(17))
+        );
+        assert_eq!(
+            held_duration_after_reload(&source, Some(seconds(10)), Some(seconds(20)), true, now),
+            Some(seconds(20))
+        );
+        assert_eq!(
+            held_duration_after_reload(&source, Some(seconds(10)), None, false, now),
+            None
+        );
+        // A transition-inclusive remainder larger than the configured duration does not underflow.
+        source = EventSource::Paused(seconds(11));
+        assert_eq!(
+            held_duration_after_reload(&source, Some(seconds(10)), Some(seconds(20)), false, now),
+            Some(seconds(20))
+        );
+    }
+
+    #[test]
+    fn ready_still_timer_cannot_advance_navigation_after_scene_activation() {
+        struct State {
+            source: EventSource,
+            scene_owned: bool,
+            advances: usize,
+        }
+        for (scene_owned, duration) in [
+            (true, Duration::ZERO),
+            (true, Duration::from_secs(10)),
+            (false, Duration::ZERO),
+        ] {
+            let mut event_loop = EventLoop::<State>::try_new().unwrap();
+            let token = event_loop
+                .handle()
+                .insert_source(Timer::from_duration(Duration::ZERO), |_, _, state| {
+                    if hold_due_scene_timer(&mut state.source, state.scene_owned) {
+                        return TimeoutAction::Drop;
+                    }
+                    state.advances += 1;
+                    TimeoutAction::Drop
+                })
+                .unwrap();
+            // IPC activation has happened, but the outer-loop pause reconciliation has not.
+            let mut state = State {
+                source: EventSource::Running(token, duration, Instant::now()),
+                scene_owned,
+                advances: 0,
+            };
+            event_loop
+                .dispatch(Some(Duration::from_millis(10)), &mut state)
+                .unwrap();
+            assert_eq!(state.advances, usize::from(!scene_owned));
+            if scene_owned {
+                assert!(matches!(state.source, EventSource::Paused(left) if left == duration));
+            } else {
+                assert!(matches!(state.source, EventSource::Running(_, _, _)));
+            }
+        }
+    }
 
     struct FakeContext {
         current: char,

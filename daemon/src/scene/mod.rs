@@ -13,6 +13,14 @@ use std::{cell::RefCell, collections::BTreeMap, path::Path, rc::Rc, time::Instan
 
 pub type SharedMotion = Rc<RefCell<Option<Playback>>>;
 
+/// A failed scene retains its output ownership until explicit mode-off.
+pub fn owns_output(shared: &SharedMotion, name: &str) -> bool {
+    shared
+        .borrow()
+        .as_ref()
+        .is_some_and(|p| p.outputs.iter().any(|o| o.output == name))
+}
+
 pub struct Object {
     pub id: String,
     pub asset: String,

@@ -35,6 +35,30 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def copy_producer_package(source, root):
+    """Copy a published 1600x600 bundle without changing any producer bytes."""
+    folder = root / "producer-package"
+    shutil.copytree(source, folder)
+    for path in source.rglob("*"):
+        if path.is_file():
+            assert digest(path) == digest(folder / path.relative_to(source))
+    scene = json.loads((folder / "scene.json").read_text())
+    assert scene["canvas"] == [1600, 600]
+    monitors = scene["plan"]["monitors"]
+    assert len(monitors) == 2
+    assert [m["crop_box"] for m in monitors] == [[0, 0, 800, 600], [800, 0, 1600, 600]]
+    assert all(m["pixels"] == [800, 600] and m.get("transform", "normal") == "normal"
+               for m in monitors)
+    assert not (folder / "outputs.json").exists()
+    write_json(folder / "outputs.json", {
+        "version": 1, "role": "wpaperd-motion-outputs", "scene_sha256": digest(folder / "scene.json"),
+        "layout_fingerprint": scene["layout_fingerprint"],
+        "outputs": [{"monitor_id": m["id"], "output": "Virtual-" + str(i),
+                     "pixels": [800, 600], "transform": "normal"}
+                    for i, m in enumerate(monitors)]})
+    return folder
+
+
 def package(root, repo, alpha=255, asset_background=False):
     from PIL import Image, ImageDraw
     folder = root / ("package-" + str(alpha) + ("-asset" if asset_background else ""))
@@ -99,7 +123,8 @@ def reference(folder, arrangement=0):
     for obj in sorted(scene["objects"], key=lambda o: o["depth"]):
         sprite = Image.open(folder / scene["assets"][obj["asset"]]["file"]).convert("RGBA")
         center = centers[obj["id"]]
-        image.alpha_composite(sprite, (round(center[0] - 32), round(center[1] - 32)))
+        image.alpha_composite(sprite, (round(center[0] - obj["size"][0] / 2),
+                                      round(center[1] - obj["size"][1] / 2)))
     matte = Image.new("RGBA", image.size, (0, 0, 0, 255))
     matte.alpha_composite(image)
     return matte.convert("RGB")
@@ -199,7 +224,12 @@ def inside(args):
             commands.write(json.dumps({"args": list(map(str, values)), "exit": proc.returncode,
                                        "stdout": proc.stdout, "stderr": proc.stderr}) + "\n")
             commands.flush()
-            assert (proc.returncode == 0) == success, proc.stderr + proc.stdout
+            if success is None and proc.returncode != 0:
+                assert proc.returncode == 1 and proc.stderr.strip() in {
+                    "Circle overlap exceeds bound", "Circle rim outside canvas",
+                    "Sampled travel exceeds bound"}, proc.stderr + proc.stdout
+                return None
+            assert (proc.returncode == 0) == (True if success is None else success), proc.stderr + proc.stdout
             return proc.stdout
 
         def frames():
@@ -208,7 +238,8 @@ def inside(args):
         time.sleep(.5)
         baseline = shot("still-before")
         assert baseline.getpixel((200, 180)) == (41, 49, 63)
-        folder = package(root, args.repo)
+        folder = (copy_producer_package(args.producer_package, root) if args.producer_package
+                  else package(root, args.repo))
         cli("scene", "start", folder)
         time.sleep(.3)
         initial = shot("initial-left")
@@ -254,7 +285,13 @@ def inside(args):
         before = frames()
         burst_started = time.monotonic()
         for _ in range(20):
-            cli("scene", "shuffle")
+            prior = json.loads(cli("scene", "status", "--json")) if args.producer_package else None
+            accepted = cli("scene", "shuffle", success=None if args.producer_package else True)
+            if accepted is None:
+                after = json.loads(cli("scene", "status", "--json"))
+                for key in ("arrangement", "history_depth", "scene_sha256", "outputs", "error"):
+                    assert after[key] == prior[key], "Rejected retarget changed " + key
+                result["producer_retarget_rejections"] = result.get("producer_retarget_rejections", 0) + 1
         time.sleep(2)
         result["burst_frame_requests"] = frames() - before
         assert result["burst_frame_requests"] <= 240 * (time.monotonic() - burst_started) + 10
@@ -266,7 +303,7 @@ def inside(args):
         broken = root / "broken"
         shutil.copytree(folder, broken)
         scene = json.loads((broken / "scene.json").read_text())
-        scene["assets"]["cyan"]["sha256"] = "0" * 64
+        scene["assets"][scene["objects"][0]["asset"]]["sha256"] = "0" * 64
         write_json(broken / "scene.json", scene)
         cli("scene", "start", broken, success=False)
         time.sleep(.2)
@@ -309,6 +346,139 @@ def inside(args):
         status = json.loads(cli("scene", "status", "--json"))
         assert status["outputs"] == {"Virtual-0": "mapped", "Absent-output": "missing"}
         cli("scene", "stop")
+        if args.producer_package:
+            exports = json.loads((folder / "exports.json").read_text())
+            cli("scene", "start", folder, "--reduced-motion")
+            errors = []
+            for index, variant in enumerate(exports["variants"]):
+                if index:
+                    cli("scene", "shuffle")
+                time.sleep(.2)
+                for output, monitor in enumerate(json.loads((folder / "scene.json").read_text())["plan"]["monitors"]):
+                    descriptor = variant["panels"][monitor["id"]]
+                    expected_panel = Image.open(folder / descriptor["file"]).convert("RGBA")
+                    matte = Image.new("RGBA", expected_panel.size, (0, 0, 0, 255))
+                    matte.alpha_composite(expected_panel)
+                    errors.append(compare(shot("producer-" + variant["id"] + "-" + str(output), output),
+                                          matte.convert("RGB")))
+            result["producer_static_panel_errors"] = errors
+            result["producer_scene_sha256"] = digest(folder / "scene.json")
+            result["producer_arrangements_sha256"] = digest(folder / "arrangements.json")
+            cli("scene", "stop")
+        # Verify restoration against real still selection, state, symlinks and detour navigation.
+        forced = root / "forced.png"
+        Image.new("RGBA", (800, 600), (96, 32, 72, 255)).save(forced)
+        alternate = root / "alternate.png"
+        Image.new("RGBA", (800, 600), (21, 131, 64, 255)).save(alternate)
+        pool = root / "pool"
+        pool.mkdir()
+        for i, color in enumerate(((41, 49, 63), (64, 88, 112), (123, 91, 42))):
+            Image.new("RGBA", (800, 600), (*color, 255)).save(pool / (str(i) + ".png"))
+        def save_directory_config(duration):
+            text = ('[default]\npath=' + json.dumps(str(pool)) +
+                    '\nmode="stretch"\ntransition-time=0\nsorting="ascending"\n')
+            if duration is not None:
+                text += 'duration=' + json.dumps(duration) + '\n'
+            # Preserve the watched inode and avoid a transient truncated configuration.
+            with config.open("r+") as stream:
+                stream.write(text.ljust(4096))
+                stream.flush()
+
+        def reload_duration(duration):
+            save_directory_config(duration)
+            deadline = time.monotonic() + 5
+            while True:
+                status = json.loads(cli("status", "--json", "Virtual-0"))[0]
+                if status["duration_left"] == duration:
+                    return
+                assert daemon.poll() is None and time.monotonic() < deadline, status
+                time.sleep(.05)
+
+        for directory in (False, True):
+            if directory:
+                stop_owned(daemon)
+                # Only this exited test process owned the socket in the private runtime.
+                socket.unlink(missing_ok=True)
+                save_directory_config("1s")
+                daemon = subprocess.Popen([str(args.binaries / "wpaperd"), "--config", str(config), "--verbose"],
+                                          env=dict(os.environ, WAYLAND_DEBUG="1"), stdout=logs[1],
+                                          stderr=subprocess.STDOUT, start_new_session=True)
+                deadline = time.monotonic() + 15
+                while not socket.exists():
+                    assert daemon.poll() is None and time.monotonic() < deadline
+                    time.sleep(.1)
+                time.sleep(.5)
+                timer_original = cli("get", "Virtual-0").strip()
+                cli("scene", "start", folder, "--reduced-motion")
+                time.sleep(2.2)
+                assert cli("get", "Virtual-0").strip() == timer_original
+                reload_duration(None)
+                reload_duration("10s")
+                reload_duration("20s")
+                reload_duration("1s")
+                result["scene_duration_reload_unset_and_repeated"] = True
+                cli("scene", "stop")
+                time.sleep(.2)
+                assert cli("get", "Virtual-0").strip() == timer_original
+                time.sleep(1.1)
+                timer_next = cli("get", "Virtual-0").strip()
+                assert timer_next == str(pool / (str((int(Path(timer_original).stem) + 1) % 3) + ".png"))
+                result["automatic_timer_hold_and_resume"] = True
+                save_directory_config("10s")
+                time.sleep(.3)
+                cli("next", "Virtual-0")
+                time.sleep(2.1)
+                cli("pause", "Virtual-0")
+                time.sleep(.3)
+            # Keep independent still-output cycling out of the detour control comparison.
+            cli("pause")
+            cli("set", forced, "Virtual-0")
+            time.sleep(.4)
+            selected = shot("detour-selected-" + str(directory))
+            assert selected.getpixel((200, 180)) == (96, 32, 72)
+            # Record ordinary detour behavior before testing the scene boundary. The still
+            # backend has separate bookkeeping quirks; scene mode must preserve its behavior.
+            cli("previous", "Virtual-0")
+            time.sleep(.4)
+            previous_path = cli("get", "Virtual-0").strip()
+            previous_pixels = shot("detour-control-previous-" + str(directory))
+            previous_state = cli("status", "--json", "Virtual-0")
+            cli("set", alternate, "Virtual-0")
+            time.sleep(.4)
+            cli("set", forced, "Virtual-0")
+            time.sleep(.4)
+            assert shot("detour-reselected-" + str(directory)).tobytes() == selected.tobytes()
+            state = cli("status", "--json", "Virtual-0")
+            links = list((root / "home").rglob("Virtual-0"))
+            assert len(links) == 1 and links[0].is_symlink()
+            assert links[0].resolve() == forced
+            cli("scene", "start", folder, "--reduced-motion")
+            time.sleep(.2)
+            if directory:
+                save_directory_config("1s")
+                deadline = time.monotonic() + 5
+                while json.loads(cli("status", "--json", "Virtual-0"))[0]["duration_left"] != "0s":
+                    assert daemon.poll() is None and time.monotonic() < deadline
+                    time.sleep(.05)
+                state_item = json.loads(state)
+                state_item[0]["duration_left"] = "0s"
+                state = json.dumps(state_item)
+                previous_item = json.loads(previous_state)
+                previous_item[0]["duration_left"] = "0s"
+                previous_state = json.dumps(previous_item)
+                result["scene_exhausted_reload_preserves_forced_detour"] = True
+            cli("scene", "stop")
+            time.sleep(.3)
+            assert shot("detour-restored-" + str(directory)).tobytes() == selected.tobytes()
+            assert cli("get", "Virtual-0").strip() == str(forced)
+            assert json.loads(cli("status", "--json", "Virtual-0")) == json.loads(state)
+            assert links[0].resolve() == forced
+            cli("previous", "Virtual-0")
+            time.sleep(.4)
+            assert cli("get", "Virtual-0").strip() == previous_path
+            assert shot("detour-previous-" + str(directory)).tobytes() == previous_pixels.tobytes()
+            assert json.loads(cli("status", "--json", "Virtual-0")) == json.loads(previous_state)
+            result["forced_" + ("directory" if directory else "file") + "_restoration"] = True
         assert daemon.poll() is None, "Daemon exited during scenarios"
         text = (root / "daemon.log").read_text(errors="replace")
         marker = re.search(r"\b(?:ERROR|WARN|WARNING|panicked)\b|protocol\s+error|failed\s+to\s+(?:draw|load\s+scene)",
@@ -329,9 +499,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binaries", type=Path, default=Path("target/debug"))
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parent.parent)
+    parser.add_argument("--producer-package", type=Path,
+                        help="Published bundle for the exact two-output nested layout; copied only")
     parser.add_argument("--inside", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     args.binaries, args.repo = args.binaries.resolve(), args.repo.resolve()
+    if args.producer_package:
+        args.producer_package = args.producer_package.resolve()
     if args.inside:
         inside(args)
         return
@@ -348,11 +522,13 @@ def main():
            "WAYLAND_DISPLAY": "wpaperd-scene-test", "LIBGL_ALWAYS_SOFTWARE": "1",
            "QT_QPA_PLATFORM": "offscreen"}
     print("Private evidence: " + str(root), flush=True)
-    process = subprocess.Popen(["dbus-run-session", "/usr/bin/python3", str(Path(__file__).resolve()),
-                                "--binaries", str(args.binaries), "--repo", str(args.repo),
-                                "--inside", str(root)], env=env, start_new_session=True)
+    command = ["dbus-run-session", "/usr/bin/python3", str(Path(__file__).resolve()),
+               "--binaries", str(args.binaries), "--repo", str(args.repo), "--inside", str(root)]
+    if args.producer_package:
+        command += ["--producer-package", str(args.producer_package)]
+    process = subprocess.Popen(command, env=env, start_new_session=True)
     try:
-        code = process.wait(timeout=70)
+        code = process.wait(timeout=90)
         assert code == 0, "Private test failed; inspect " + str(root)
     finally:
         stop_owned(process)

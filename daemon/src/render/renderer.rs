@@ -1,4 +1,4 @@
-use std::{ffi::CStr, ops::Deref, rc::Rc, time::Instant};
+use std::{ops::Deref, rc::Rc, time::Instant};
 
 use color_eyre::{
     eyre::{ensure, OptionExt, WrapErr},

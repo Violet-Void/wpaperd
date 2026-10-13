@@ -39,6 +39,10 @@ drain before a new scene callback is requested. Repeated commands replace the ta
 parallel callback chains.
 
 Still navigation, set, reload and pause commands targeting mapped outputs require `scene stop` first.
+This also applies to a failed scene in static fallback. Its still timer and any fresh image selection
+remain held until mode-off; a timer already due in the activation dispatch cannot advance navigation.
+Configuration duration reloads update the held remainder, including initially unset timers and an
+exhausted zero remainder, without selecting an image behind the scene.
 Unmapped outputs retain their ordinary wallpaper operation. Still configuration, image pool, current
 image links and explicit pause state retain their existing roles; scenes are never inferred from an
 image filename or ordinary still command. Playback is opt-in through IPC and is not persisted across
@@ -90,8 +94,9 @@ preserves provenance and does not reconstruct a flattened parent's hidden pixels
 `duration_ms: 1800`, `easing: cubic-in-out`, `orbit: {kind: perpendicular-sine, amplitude_pixels: ...}`,
 four `circle_radii`, three distinct `{id, centers}` arrangements and these fixed constraints:
 `max_overlap_fraction: 0.65`, `min_negative_space_fraction: 0.45`, `max_travel_fraction: 0.25`.
-Every center map references the exact object IDs. Only their centers move. Orbit amplitude is
-`round(0.06 * min(canvas), 3)`.
+Every center map references the exact object IDs. Only their centers move. Orbit amplitude ranges
+from zero through 10% of the smaller canvas axis; the procedural default uses
+`round(0.06 * min(canvas), 3)`. Arrangement zero may differ from the scene's initial centers.
 
 For raw phase `t` clamped to 0..1, eased phase `u` is `4*t^3` below one half and
 `1 - (-2*t+2)^3/2` otherwise. Each position is `lerp(source, target, u)` plus its normalized
@@ -104,6 +109,11 @@ the smaller disc area is at most 0.65. The conservative negative-space lower bou
 `max(0, 1 - sum(pi*radius^2)/(width*height))`, at least 0.45. Sampled displacement from the transition
 source divided by the canvas diagonal is at most 0.25. Retargets undergo the same extra checks.
 This is bounded sampled validation, not a mathematical proof of continuous collision avoidance.
+Overlap uses the published producer's dimensionless circular caps and small-angle series.
+Entirely subnormal geometry is normalized by an exact power of two before measuring distance.
+Very unequal radii resolve contacts and chord numerators with exact binary rational arithmetic,
+using the already-resolved `num-rational 0.4.2` and `num-traits 0.2.19` crates. These routes retain
+the positive-radius domain and fixed limits, including tiny and diagonal containment cases.
 
 PNG source bytes are read once from pinned descriptors, verified and decoded. Textures upload the
 unchanged straight RGBA channels. The wallpaper presents the producer's scene alpha-over over an
@@ -146,6 +156,12 @@ and preserves an explicit user pause. Static/frozen playback requests no recurri
 If an EGL context cannot be made current, scene failure performs no GL draw or cleanup in another
 output's context. Teardown releases GL handles before destroying a successfully bound context;
 on binding failure it disarms their Rust destructors and lets named EGL destruction reclaim them.
+Texture construction owns its allocation before activation/upload, so failed uploads release new
+textures in the bound context. Shader construction likewise owns unattached shaders through every
+failure path. Error reporting consumes the original GL error without generating another GL query
+error; subsequent valid operations remain usable. Stop and fallback redraw retained still textures
+without selecting another image; a still load already pending at activation resumes separately.
+An output with no prior still selection initializes its configured still image after mode-off.
 
 Run repository checks without applying wallpaper:
 
@@ -181,6 +197,14 @@ The screenshot permission development switch applies only to the new private com
 /usr/bin/python3 tests/nested_wayland_scene.py --binaries target/debug
 ```
 
+To exercise a published producer bundle for this exact two-output layout, pass
+`--producer-package /absolute/path/to/bundle`. The harness copies all producer files byte-for-byte,
+adds only its private `outputs.json`, and compares both panels of all three resting arrangements
+against the published static exports. It also checks forced still restoration for file and directory
+configurations, including the current image/link, status and ordinary Previous behavior.
+Existing still detour bookkeeping is compared against a no-scene control; its separate maintenance
+belongs to [wpaperd #2](https://github.com/Violet-Void/wpaperd/issues/2).
+
 The 2026-10-13 software-EGL run on KWin 6.7.5 passed: both initial master crops had zero channel
 error against Pillow, translucent solid/asset backgrounds had maximum channel error one, and
 static/frozen idle requested zero frames. Orbit requested 218 callbacks across both outputs;
@@ -189,6 +213,23 @@ transform preservation, missing-output status, unmapped still preservation and e
 restoration passed. Fresh daemon logs contained no errors or warnings. The private compositor
 reported its existing Vulkan conformance warning. The harness prints its evidence directory
 and retains captured PNGs, command receipts, logs and a result JSON there.
+
+A subsequent run used the unchanged published producer bundle from
+[`c17f4e8`](https://github.com/Violet-Void/violet-void-wallpapers/commit/c17f4e8f5a7c17cca5cfa811d398a9f197afff0a).
+The exact scene SHA256 was `f6685ea9631a2de0e206caedb644e3456d0f8aa998fcd9ee151a904cf35dc819`;
+the arrangement SHA256 was `e989a92f9ec7171b3b9abd7278206f8626faa6f9adcfeafdf33f83a48e08f58f`.
+Both panels of all three rests matched the bound static exports within one channel value. Orbit
+requested 218 callbacks and the 20-command burst 226; static/frozen idle requested zero frames.
+Forced file/directory still restoration and the no-scene Previous controls passed, with no fresh
+daemon errors or warnings. A one-second automatic still timer stayed held beyond its deadline in
+scene mode, then resumed and advanced once after mode-off. Reloading duration through unset, ten,
+and twenty seconds passed without a crash. Shortening an elapsed timer to zero during scene mode
+preserved the forced still image, symlink, paused status and subsequent Previous detour. All 48
+locked Rust tests passed; shader and texture fault tests cover cleanup in the bound context.
+Unsafe mid-flight retargets may reject
+under the published constraints;
+the harness checks retained target/history when that happens rather than requiring every burst
+command to succeed.
 
 These checks cover fixed normal-transform virtual outputs. Physical GPU fidelity, fractional scale,
 portrait transforms, hotplug/DPMS, post-activation GPU faults, host performance, services and bar

@@ -8,6 +8,8 @@ use color_eyre::{
     eyre::{ensure, eyre},
     Result,
 };
+use num_rational::BigRational;
+use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use smithay_client_toolkit::reexports::client::protocol::wl_output::Transform;
@@ -124,12 +126,13 @@ impl Playback {
             "Arrangements scene binding mismatch"
         );
         fields(&m["orbit"], &["kind", "amplitude_pixels"], &[])?;
-        let amplitude = number(&m["orbit"]["amplitude_pixels"], 0.0, 1966.08)?;
-        let expected = (0.06 * scene.canvas[0].min(scene.canvas[1]) as f64 * 1000.0)
-            .round_ties_even()
-            / 1000.0;
+        let amplitude = number(
+            &m["orbit"]["amplitude_pixels"],
+            0.0,
+            scene.canvas[0].min(scene.canvas[1]) as f64 * 0.1,
+        )?;
         ensure!(
-            m["orbit"]["kind"] == "perpendicular-sine" && (amplitude - expected).abs() < 1e-9,
+            m["orbit"]["kind"] == "perpendicular-sine",
             "Unsupported orbit geometry"
         );
         fields(
@@ -301,7 +304,8 @@ impl Playback {
     fn validate_positions(&self, centers: &[[f64; 2]]) -> Result<()> {
         let [w, h] = self.scene.canvas;
         let mut covered = 0.0;
-        for (i, (c, r)) in centers.iter().zip(&self.radii).enumerate() {
+        // Check the complete pose before exact pair arithmetic consumes either center.
+        for (c, r) in centers.iter().zip(&self.radii) {
             ensure!(
                 c[0].is_finite()
                     && c[1].is_finite()
@@ -312,11 +316,11 @@ impl Playback {
                 "Circle rim outside canvas"
             );
             covered += std::f64::consts::PI * r * r;
+        }
+        for (i, (c, r)) in centers.iter().zip(&self.radii).enumerate() {
             for (b, s) in centers.iter().zip(&self.radii).skip(i + 1) {
-                let distance = (c[0] - b[0]).hypot(c[1] - b[1]);
-                let area = overlap(*r, *s, distance);
                 ensure!(
-                    area / (std::f64::consts::PI * r.min(*s).powi(2)) <= 0.65 + 1e-9,
+                    overlap_fraction(*c, *b, *r, *s) <= 0.65 + 1e-9,
                     "Circle overlap exceeds bound"
                 );
             }
@@ -445,25 +449,115 @@ impl Playback {
         }
     }
 }
-fn overlap(r: f64, s: f64, d: f64) -> f64 {
-    if d >= r + s {
-        0.0
-    } else if d <= (r - s).abs() {
-        std::f64::consts::PI * r.min(s).powi(2)
+// Producer c17f4e8f5a7c17cca5cfa811d398a9f197afff0a, motion_arrangements.py.
+// Work in smaller-circle units: tiny areas and squared radii may underflow.
+fn cap_per_chord_squared(sine: f64, cosine: f64) -> f64 {
+    let squared = sine * sine;
+    if sine < 0.001 {
+        // asin(s) - s*sqrt(1-s²), divided algebraically by s² (DLMF 4.24.1).
+        sine * (2.0 / 3.0
+            + squared
+                * (1.0 / 5.0
+                    + squared * (3.0 / 28.0 + squared * (5.0 / 72.0 + squared * 35.0 / 704.0))))
     } else {
-        r * r
-            * ((d * d + r * r - s * s) / (2.0 * d * r))
-                .clamp(-1.0, 1.0)
-                .acos()
-            + s * s
-                * ((d * d + s * s - r * r) / (2.0 * d * s))
-                    .clamp(-1.0, 1.0)
-                    .acos()
-            - 0.5
-                * ((-d + r + s) * (d + r - s) * (d - r + s) * (d + r + s))
-                    .max(0.0)
-                    .sqrt()
+        (sine.atan2(cosine) - sine * cosine) / squared
     }
+}
+
+enum ContactChord {
+    Contact(f64),
+    Chord(f64),
+}
+
+fn exact_contact_chord(
+    first: [f64; 2],
+    second: [f64; 2],
+    small: f64,
+    large: f64,
+    distance: f64,
+    power: i32,
+) -> ContactChord {
+    // All inputs have passed the finite, bounded loader/position guards.
+    // from_float retains each binary64 value exactly, including subnormals.
+    let exact = |value| BigRational::from_float(value).unwrap();
+    let x = exact(first[0]) - exact(second[0]);
+    let y = exact(first[1]) - exact(second[1]);
+    let r = exact(small);
+    let radius = exact(large);
+    let squared = &x * &x + &y * &y;
+    let sum = &radius + &r;
+    if squared >= &sum * &sum {
+        return ContactChord::Contact(0.0);
+    }
+    let difference = &radius - &r;
+    if squared <= &difference * &difference {
+        return ContactChord::Contact(1.0);
+    }
+    // Only the partial-lens denominator uses the approximate scaled hypot.
+    let approximate = exact(distance) / exact(2.0_f64.powi(power));
+    let numerator = squared + &r * &r - &radius * &radius;
+    let denominator = exact(2.0) * approximate * r;
+    ContactChord::Chord((numerator / denominator).to_f64().unwrap())
+}
+
+pub(super) fn overlap_fraction(
+    first: [f64; 2],
+    second: [f64; 2],
+    radius_a: f64,
+    radius_b: f64,
+) -> f64 {
+    let (mut dx, mut dy) = (first[0] - second[0], first[1] - second[1]);
+    let (original_small, original_large) = (radius_a.min(radius_b), radius_a.max(radius_b));
+    let (mut small, mut large) = (original_small, original_large);
+    let scale = dx.abs().max(dy.abs()).max(small).max(large);
+    let mut power = 0;
+    if scale > 0.0 && scale < f64::MIN_POSITIVE {
+        // Exact scaling before hypot prevents subnormal-length quantization.
+        // Forming the reciprocal of a subnormal scale would overflow.
+        power = 1022;
+        let factor = 2.0_f64.powi(power);
+        dx *= factor;
+        dy *= factor;
+        small *= factor;
+        large *= factor;
+    }
+    let distance = dx.hypot(dy);
+    let chord = if small / large < 1e-6 {
+        match exact_contact_chord(
+            first,
+            second,
+            original_small,
+            original_large,
+            distance,
+            power,
+        ) {
+            ContactChord::Contact(fraction) => return fraction,
+            ContactChord::Chord(chord) => chord,
+        }
+    } else {
+        let delta = distance - large;
+        if delta >= small {
+            return 0.0;
+        }
+        if delta <= -small {
+            return 1.0;
+        }
+        (delta / small) * (0.5 + 0.5 * (large / distance)) + 0.5 * (small / distance)
+    }
+    .clamp(-1.0, 1.0);
+    let sine = ((1.0 - chord) * (1.0 + chord)).max(0.0).sqrt();
+    let chord_squared = sine * sine;
+    let minor_cap = chord_squared * cap_per_chord_squared(sine, chord.abs());
+    let small_cap = if chord >= 0.0 {
+        minor_cap
+    } else {
+        std::f64::consts::PI - minor_cap
+    };
+    let ratio = small / large;
+    let large_sine = ratio * sine;
+    let large_cosine = (distance / large - ratio * chord).clamp(0.0, 1.0);
+    let large_cap = chord_squared * cap_per_chord_squared(large_sine, large_cosine);
+    ((small_cap + large_cap) / std::f64::consts::PI).clamp(0.0, 1.0)
 }
 pub fn orbit(from: &[[f64; 2]], to: &[[f64; 2]], t: f64, amplitude: f64) -> Vec<[f64; 2]> {
     let t = t.clamp(0.0, 1.0);
@@ -488,9 +582,13 @@ pub fn orbit(from: &[[f64; 2]], to: &[[f64; 2]], t: f64, amplitude: f64) -> Vec<
                 0.0
             } else {
                 amplitude * (std::f64::consts::PI * u).sin() * if i % 2 == 0 { 1.0 } else { -1.0 }
-                    / d
             };
-            [a[0] + dx * u - dy * offset, a[1] + dy * u + dx * offset]
+            let (nx, ny) = if d == 0.0 {
+                (0.0, 0.0)
+            } else {
+                (-dy / d, dx / d)
+            };
+            [a[0] + dx * u + nx * offset, a[1] + dy * u + ny * offset]
         })
         .collect()
 }

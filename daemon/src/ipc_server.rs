@@ -103,7 +103,7 @@ pub fn handle_message(
     // Handle IPC events.
     let resp: Result<IpcResponse, IpcError> = if still_monitors.is_some_and(|monitors| {
         wpaperd.surfaces.iter().any(|s| {
-            s.motion_active() && (monitors.is_empty() || monitors.iter().any(|m| m == s.name()))
+            s.motion_owned() && (monitors.is_empty() || monitors.iter().any(|m| m == s.name()))
         })
     }) {
         Err(IpcError::ValidationError(

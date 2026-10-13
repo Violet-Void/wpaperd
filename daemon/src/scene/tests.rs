@@ -1,7 +1,7 @@
 use super::{
     layout::{canonical, normalize, sha256},
     loader,
-    playback::orbit,
+    playback::{orbit, overlap_fraction},
 };
 use serde_json::{json, Value};
 use std::{
@@ -135,6 +135,25 @@ fn translucent_background_and_overlapping_rgba_layers_stay_unchanged() {
         playback.scene.images["background"].get_pixel(500, 300).0,
         [10, 80, 160, 64]
     );
+}
+
+#[test]
+fn mapped_output_ownership_survives_failure_until_explicit_mode_off() {
+    let fixture = Fixture::new();
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(Some(
+        super::load(&fixture.path, false).unwrap(),
+    )));
+    assert!(super::owns_output(&shared, "Virtual-0"));
+    assert!(!super::owns_output(&shared, "Unmapped"));
+    shared
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .fail("injected failure".into());
+    assert!(super::owns_output(&shared, "Virtual-0"));
+    assert!(!super::owns_output(&shared, "Unmapped"));
+    shared.borrow_mut().take();
+    assert!(!super::owns_output(&shared, "Virtual-0"));
 }
 
 #[test]
@@ -450,4 +469,182 @@ fn orbit_returns_authored_fractional_endpoints_without_cancellation() {
         assert_eq!(centers[1][1].to_bits(), (-0.0_f64).to_bits());
     }
     assert_eq!(orbit(&from, &from, 0.5, 30.0), from);
+}
+
+#[test]
+fn overlap_matches_published_producer_extreme_geometry() {
+    // Values from producer c17f4e8, not the native implementation.
+    let unit = f64::from_bits(1);
+    let root_two = 2.0_f64.sqrt();
+    let cases = [
+        ([0.0, 0.0], [10.0, 0.0], 5.0, 5.0, 0.0),
+        ([0.0, 0.0], [0.0, 0.0], 5.0, 3.0, 1.0),
+        ([0.0, 0.0], [5.0, 0.0], 5.0, 5.0, 0.3910022189557707),
+        ([0.0, 0.0], [1.0, 0.0], 1.0, 2.0, 1.0),
+        ([0.0, 0.0], [3.0, 0.0], 1.0, 2.0, 0.0),
+        ([0.0, 0.0], [99.1, 0.0], 1.0, 100.0, 0.9812184918183816),
+        ([0.0, 0.0], [100.9, 0.0], 1.0, 100.0, 0.018605751654293432),
+        (
+            [500.0000005, 300.0],
+            [600.0, 300.0],
+            1e-6,
+            100.0,
+            0.8044988891369677,
+        ),
+        ([0.0, 0.0], [100.0, 0.0], unit, 100.0, 0.5),
+        ([0.0, 0.0], [100.0, 0.0], 1e-300, 100.0, 0.5),
+        ([1e-18, 0.0], [100.0, 0.0], 1e-18, 100.0, 1.0),
+        ([1.0, 1.0], [2.0, 2.0], 1e-18, root_two, 1.0),
+        ([1.0, 1.0], [2.0, 2.0], 1e-18, root_two - f64::EPSILON, 0.0),
+        ([0.0, 0.0], [root_two, 0.0], 1e-18, root_two, 0.5),
+        (
+            [10.0 * unit, 10.0 * unit],
+            [13.0 * unit, 12.0 * unit],
+            7.0 * unit,
+            7.0 * unit,
+            0.6757524754693924,
+        ),
+        (
+            [0.0, 0.0],
+            [unit, unit],
+            2.0 * unit,
+            2.0 * unit,
+            0.5594043441634879,
+        ),
+    ];
+    for (first, second, small, large, expected) in cases {
+        let actual = overlap_fraction(first, second, small, large);
+        assert!(actual.is_finite() && (0.0..=1.0).contains(&actual));
+        assert!(
+            (actual - expected).abs() < 2e-13,
+            "{first:?} {second:?} {small} {large}: {actual} vs {expected}"
+        );
+        assert_eq!(actual, overlap_fraction(second, first, large, small));
+    }
+    for radius in [unit, 1e-200, 1.0, 1e200] {
+        let actual = overlap_fraction([0.0, 0.0], [radius, 0.0], radius, radius);
+        assert!((actual - 0.3910022189557707).abs() < 2e-13);
+    }
+    for radius in [f64::MIN_POSITIVE - unit, f64::MIN_POSITIVE] {
+        let actual = overlap_fraction(
+            [0.0, 0.0],
+            [radius * 3.0 / 7.0, radius * 2.0 / 7.0],
+            radius,
+            radius,
+        );
+        assert!((actual - 0.6757524754693924).abs() < 2e-13);
+    }
+    assert!(overlap_fraction([0.0, 0.0], [2.0 - f64::EPSILON, 0.0], 1.0, 1.0) > 0.0);
+}
+
+#[test]
+fn loader_accepts_safe_tiny_circles_and_rejects_excess_overlap() {
+    let unit = f64::from_bits(1);
+    let root_two = 2.0_f64.sqrt();
+    for (first, second, small, large, safe) in [
+        (
+            [10.0 * unit, 10.0 * unit],
+            [13.0 * unit, 12.0 * unit],
+            7.0 * unit,
+            7.0 * unit,
+            false,
+        ),
+        (
+            [10.0 * unit, 10.0 * unit],
+            [11.0 * unit, 11.0 * unit],
+            2.0 * unit,
+            2.0 * unit,
+            true,
+        ),
+        ([1.0, 1.0], [2.0, 2.0], 1e-18, root_two, false),
+        (
+            [root_two, 4.0],
+            [2.0 * root_two, 4.0],
+            1e-18,
+            root_two,
+            true,
+        ),
+        ([10.0, 10.0], [20.0, 10.0], unit, 10.0, true),
+        ([10.00000005, 10.0], [20.0, 10.0], 1e-7, 10.0, false),
+        // Producer fractions .6500000005 and .650000002 straddle the 1e-9 tolerance.
+        ([10.0, 10.0], [10.557067947976236, 10.0], 1.0, 1.0, true),
+        ([10.0, 10.0], [10.557067945522956, 10.0], 1.0, 1.0, false),
+    ] {
+        let mut fixture = Fixture::new();
+        fixture.arrangements["orbit"]["amplitude_pixels"] = json!(0);
+        fixture.arrangements["circle_radii"]["cyan"] = json!(small);
+        fixture.arrangements["circle_radii"]["violet"] = json!(large);
+        for (index, row) in fixture.arrangements["arrangements"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .enumerate()
+        {
+            // Static tiny pair, three distinct maps. Loading samples every directed path.
+            row["centers"]["cyan"] = json!(first);
+            row["centers"]["violet"] = json!(second);
+            row["centers"]["magenta"] = json!([1000 + index, 300]);
+            row["centers"]["ice"] = json!([1300, 300]);
+        }
+        fixture.write();
+        let result = super::load(&fixture.path, false);
+        if safe {
+            result.unwrap();
+        } else {
+            assert_eq!(
+                result.err().unwrap().to_string(),
+                "Circle overlap exceeds bound"
+            );
+        }
+    }
+}
+
+#[test]
+fn loader_preserves_positive_radius_domain_and_producer_amplitude_range() {
+    let mut fixture = Fixture::new();
+    for amplitude in [0.0, 12.0, 60.0] {
+        fixture.arrangements["orbit"]["amplitude_pixels"] = json!(amplitude);
+        fixture.write();
+        super::load(&fixture.path, false).unwrap();
+    }
+    for amplitude in [-1.0, 60.000000001] {
+        fixture.arrangements["orbit"]["amplitude_pixels"] = json!(amplitude);
+        fixture.write();
+        assert!(super::load(&fixture.path, false).is_err());
+    }
+    fixture.arrangements["orbit"]["amplitude_pixels"] = json!(0);
+    for radius in [0.0, -f64::from_bits(1), 32.000000001] {
+        fixture.arrangements["circle_radii"]["cyan"] = json!(radius);
+        fixture.write();
+        assert!(super::load(&fixture.path, false).is_err());
+    }
+    for limit in [0.65000001, 0.64999999] {
+        fixture.arrangements["circle_radii"]["cyan"] = json!(22.0);
+        fixture.arrangements["constraints"]["max_overlap_fraction"] = json!(limit);
+        fixture.write();
+        assert!(super::load(&fixture.path, false).is_err());
+    }
+}
+
+#[test]
+fn orbit_normalizes_tiny_nonzero_movement_before_multiplying_offset() {
+    let unit = f64::from_bits(1);
+    let from = [[0.0, 0.0], [0.0, 0.0]];
+    let to = [[unit, 0.0], [0.0, unit]];
+    assert_eq!(orbit(&from, &to, 0.0, 1.0), from);
+    assert_eq!(orbit(&from, &to, 1.0, 1.0), to);
+    assert_eq!(orbit(&from, &to, 0.5, 1.0), [[0.0, 1.0], [1.0, 0.0]]);
+
+    let mut fixture = Fixture::new();
+    fixture.arrangements["circle_radii"]["cyan"] = json!(unit);
+    for (i, row) in fixture.arrangements["arrangements"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .enumerate()
+    {
+        row["centers"]["cyan"] = json!([(10 + i) as f64 * unit, 300.0]);
+    }
+    fixture.write();
+    super::load(&fixture.path, false).unwrap();
 }
