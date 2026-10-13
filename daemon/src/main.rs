@@ -6,6 +6,7 @@ mod image_picker;
 mod ipc_server;
 mod opts;
 mod render;
+mod scene;
 mod socket;
 mod surface;
 mod wallpaper_groups;
@@ -249,6 +250,7 @@ fn run(opts: Opts, xdg_dirs: BaseDirectories) -> Result<()> {
         }
 
         // Due to how LayerSurface works, we cannot attach the egl window right away.
+        wpaperd.reconcile_motion_failure(&qh);
         // The LayerSurface needs to have received a configure callback first.
         // Afterwards we need to draw for the first time and then add a timer if needed.
         // We cannot use WlSurface::frame() because it only works for windows that are
@@ -273,6 +275,10 @@ fn run(opts: Opts, xdg_dirs: BaseDirectories) -> Result<()> {
                 // If the surface has already been drawn for the first time, then handle pausing/resuming
                 // the automatic wallpaper sequence.
                 surface.handle_pause_state(&event_loop.handle());
+                // Scene start before a first frame can leave the still timer unset.
+                if !surface.should_pause() {
+                    surface.ensure_timer(&event_loop.handle());
+                }
             };
         });
 

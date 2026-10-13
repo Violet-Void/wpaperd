@@ -31,7 +31,11 @@ toml = "1.1.2"
 xdg = "3.0.0"
 walkdir = "2.5.0"
 dirs = "6.0.0"
-serde_json = "1.0.149"
+serde_json = { version = "1.0.149", features = ["float_roundtrip", "arbitrary_precision", "raw_value"] }
+sha2 = "=0.10.9"
+crc32fast = "=1.5.0"
+png = "=0.18.1"
+flate2 = "=1.1.9"
 wayland-egl = "0.32.11"
 khronos-egl = { version = "6.0.0", features = [ "static" ] }
 format-bytes = "0.3.0"

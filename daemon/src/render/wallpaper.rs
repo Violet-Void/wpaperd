@@ -84,11 +84,16 @@ impl Wallpaper {
         }
         load_texture(&self.gl, image)
     }
-}
 
-impl Drop for Wallpaper {
-    fn drop(&mut self) {
-        unsafe { self.gl.DeleteTextures(1, &self.texture) };
+    /// The owner must have bound this texture's context before releasing it.
+    pub fn release(&mut self) {
+        if self.texture == 0 {
+            return;
+        }
+        let texture = std::mem::replace(&mut self.texture, 0);
+        unsafe {
+            self.gl.DeleteTextures(1, &texture);
+        }
         let check_err = || -> Result<()> {
             unsafe {
                 gl_check!(self.gl, "Failed to delete the previous texture");
@@ -98,5 +103,24 @@ impl Drop for Wallpaper {
         if let Err(err) = check_err() {
             warn!("{:?}", err.wrap_err("Failed to drop the wallpaper"));
         }
+    }
+    /// EGL context destruction reclaims the GPU allocation; Rust data still drops normally.
+    pub fn disarm(&mut self) {
+        self.texture = 0;
+    }
+    #[cfg(test)]
+    pub(super) fn test_texture(gl: Rc<gl::Gl>, texture: u32) -> Self {
+        Self {
+            gl,
+            texture,
+            image_width: 1,
+            image_height: 1,
+        }
+    }
+}
+
+impl Drop for Wallpaper {
+    fn drop(&mut self) {
+        self.release();
     }
 }

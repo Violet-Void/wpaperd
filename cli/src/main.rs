@@ -11,7 +11,7 @@ use clap::Parser;
 use serde::Serialize;
 use wpaperd_ipc::{socket_path, IpcError, IpcMessage, IpcResponse};
 
-use crate::opts::{Opts, SubCmd};
+use crate::opts::{Opts, SceneCommand, SubCmd};
 
 fn unquote(s: String) -> String {
     if s.starts_with('"') && s.ends_with('"') {
@@ -28,6 +28,27 @@ fn main() {
 
     let mut conn = UnixStream::connect(socket_path().unwrap()).unwrap();
     let msg = match args.subcmd {
+        SubCmd::Scene { command } => match command {
+            SceneCommand::Start {
+                path,
+                reduced_motion,
+            } => IpcMessage::StartScene {
+                path: if path.is_absolute() {
+                    path
+                } else {
+                    std::env::current_dir().unwrap().join(path)
+                },
+                reduced_motion,
+            },
+            SceneCommand::Shuffle => IpcMessage::ShuffleScene,
+            SceneCommand::Previous => IpcMessage::PreviousScene,
+            SceneCommand::Freeze => IpcMessage::FreezeScene,
+            SceneCommand::Stop => IpcMessage::StopScene,
+            SceneCommand::Status { json } => {
+                json_resp = json;
+                IpcMessage::SceneStatus
+            }
+        },
         SubCmd::GetWallpaper { monitor } => IpcMessage::CurrentWallpaper {
             monitor: unquote(monitor),
         },
@@ -78,6 +99,24 @@ fn main() {
         serde_json::from_str(&buf).expect("wpaperd to return a valid json");
     match res {
         Ok(resp) => match resp {
+            IpcResponse::SceneStatus(status) => {
+                if json_resp {
+                    println!("{}", serde_json::to_string(&status).unwrap());
+                } else {
+                    println!(
+                        "{}{}{}",
+                        status.state,
+                        status
+                            .arrangement
+                            .map(|a| format!(" ({a})"))
+                            .unwrap_or_default(),
+                        status.error.map(|e| format!(": {e}")).unwrap_or_default()
+                    );
+                    for (output, state) in status.outputs {
+                        println!("{output}: {state}");
+                    }
+                }
+            }
             IpcResponse::CurrentWallpaper { path } => println!("{}", path.to_string_lossy()),
             IpcResponse::AllWallpapers { entries: paths } => {
                 if json_resp {

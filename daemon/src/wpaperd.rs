@@ -48,6 +48,8 @@ pub struct Wpaperd {
     /// clicks fall through to the Plasma desktop and trigger its wallpaper manager.
     /// A full input region prevents that while having no observable downside on KDE.
     pub is_kde: bool,
+    pub motion: crate::scene::SharedMotion,
+    motion_fallback_applied: bool,
 }
 
 impl Wpaperd {
@@ -83,6 +85,8 @@ impl Wpaperd {
             wallpaper_groups: Rc::new(RefCell::new(WallpaperGroups::new())),
             xdg_dirs,
             is_kde,
+            motion: Rc::new(RefCell::new(None)),
+            motion_fallback_applied: false,
         })
     }
 
@@ -120,6 +124,111 @@ impl Wpaperd {
     ) -> Option<&mut Surface> {
         self.surfaces.iter_mut().find(|s| surface == s.wl_surface())
     }
+
+    pub fn start_motion(
+        &mut self,
+        path: &std::path::Path,
+        reduced_motion: bool,
+        qh: &QueueHandle<Self>,
+    ) -> Result<()> {
+        let playback = crate::scene::load(path, reduced_motion)?;
+        let mut present = 0;
+        for binding in &playback.outputs {
+            if let Some(surface) = self.surfaces.iter().find(|s| s.name() == binding.output) {
+                binding.validate(surface.display_info())?;
+                present += 1;
+            }
+        }
+        color_eyre::eyre::ensure!(present > 0, "No mapped scene output is currently available");
+        for i in 0..self.surfaces.len() {
+            if playback
+                .outputs
+                .iter()
+                .any(|o| o.output == self.surfaces[i].name())
+            {
+                if let Err(error) = self.surfaces[i].prepare_motion(&playback.scene) {
+                    for surface in &mut self.surfaces {
+                        surface.discard_prepared_motion();
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        // Fully validate before replacing the current session. Missing outputs retain their crops.
+        let previous = self.motion.borrow_mut().take();
+        *self.motion.borrow_mut() = Some(playback);
+        self.motion_fallback_applied = false;
+        for surface in &mut self.surfaces {
+            if surface.motion_active() {
+                if let Err(e) = surface.install_prepared_motion() {
+                    self.motion
+                        .borrow_mut()
+                        .as_mut()
+                        .unwrap()
+                        .fail(e.to_string());
+                }
+            } else if previous
+                .as_ref()
+                .is_some_and(|p| p.outputs.iter().any(|o| o.output == surface.name()))
+            {
+                surface.restore_still(qh);
+            }
+        }
+        self.queue_motion(qh);
+        Ok(())
+    }
+    pub fn queue_motion(&mut self, qh: &QueueHandle<Self>) {
+        for surface in &mut self.surfaces {
+            if surface.motion_active() {
+                surface.queue_draw(qh);
+            }
+        }
+    }
+    pub fn stop_motion(&mut self, qh: &QueueHandle<Self>) {
+        let previous = self.motion.borrow_mut().take();
+        if let Some(previous) = previous {
+            for surface in &mut self.surfaces {
+                if previous.outputs.iter().any(|o| o.output == surface.name()) {
+                    surface.restore_still(qh);
+                }
+            }
+        }
+        self.motion_fallback_applied = false;
+    }
+    pub fn reconcile_motion_failure(&mut self, qh: &QueueHandle<Self>) {
+        let affected = self
+            .motion
+            .borrow()
+            .as_ref()
+            .filter(|p| p.failure.is_some())
+            .map(|p| {
+                p.outputs
+                    .iter()
+                    .map(|o| o.output.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if !affected.is_empty() && !self.motion_fallback_applied {
+            self.motion_fallback_applied = true;
+            for surface in &mut self.surfaces {
+                if affected.iter().any(|name| name == surface.name()) {
+                    surface.restore_still(qh);
+                }
+            }
+        }
+    }
+    pub fn motion_status(&self) -> wpaperd_ipc::MotionStatus {
+        match self.motion.borrow().as_ref() {
+            Some(p) => p.status(
+                &self
+                    .surfaces
+                    .iter()
+                    .map(|s| s.display_info())
+                    .collect::<Vec<_>>(),
+            ),
+            None => wpaperd_ipc::MotionStatus::default(),
+        }
+    }
 }
 
 impl CompositorHandler for Wpaperd {
@@ -143,6 +252,7 @@ impl CompositorHandler for Wpaperd {
         _time: u32,
     ) {
         if let Some(s) = self.surface_from_wl_surface(surface) {
+            s.frame_callback_received();
             s.try_drawing(qh);
         }
     }

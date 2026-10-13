@@ -11,6 +11,11 @@ pub struct Opts {
 
 #[derive(clap::Subcommand)]
 pub enum SubCmd {
+    /// Explicitly opt into the portable native motion-scene backend
+    Scene {
+        #[clap(subcommand)]
+        command: SceneCommand,
+    },
     #[clap(visible_alias = "get")]
     GetWallpaper { monitor: String },
     #[clap(visible_alias = "get-all")]
@@ -43,5 +48,27 @@ pub enum SubCmd {
         path: PathBuf,
         /// Monitors to set wallpaper on (if empty, sets on all monitors)
         monitors: Vec<String>,
+    },
+}
+
+#[derive(clap::Subcommand)]
+pub enum SceneCommand {
+    /// Load a package containing scene.json, arrangements.json and outputs.json
+    Start {
+        path: PathBuf,
+        #[clap(long)]
+        reduced_motion: bool,
+    },
+    /// Move deterministically to the next of the three arrangements
+    Shuffle,
+    /// Return to the preceding requested arrangement (bounded history)
+    Previous,
+    /// Toggle freeze at the current position; thaw resumes the shared clock
+    Freeze,
+    /// Release scene textures and restore ordinary still wallpaper operation
+    Stop,
+    Status {
+        #[clap(long)]
+        json: bool,
     },
 }

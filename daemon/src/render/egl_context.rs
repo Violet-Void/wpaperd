@@ -224,10 +224,25 @@ impl EglContext {
         // See https://registry.khronos.org/EGL/specs/eglspec.1.5.pdf
         self.swap_buffers().wrap_err("Failed to swap EGL buffers")
     }
+
+    pub fn draw_scene(&mut self, frame: &crate::scene::Frame, display: &DisplayInfo) -> Result<()> {
+        self.renderer.draw_scene(frame, display)?;
+        self.renderer.clear_after_draw()?;
+        self.swap_buffers()
+    }
 }
 
 impl Drop for EglContext {
     fn drop(&mut self) {
+        // No GL destructor may run against a different current context. Named EGL destruction
+        // reclaims this context's handles when rebinding fails; Rust allocations still drop.
+        let current = self.make_current().is_ok();
+        release_or_disarm(
+            &mut self.renderer,
+            current,
+            Renderer::release_resources,
+            Renderer::disarm_resources,
+        );
         if let Err(err) = egl.destroy_surface(self.display, self.surface) {
             warn!(
                 "{:?}",
@@ -246,5 +261,55 @@ impl Drop for EglContext {
                 ))
             );
         }
+    }
+}
+
+fn release_or_disarm<T>(
+    owned: &mut T,
+    current: bool,
+    release: impl FnOnce(&mut T),
+    disarm: impl FnOnce(&mut T),
+) {
+    if current {
+        release(owned);
+    } else {
+        disarm(owned);
+    }
+}
+
+#[cfg(test)]
+mod teardown_tests {
+    use super::release_or_disarm;
+    #[test]
+    fn failed_context_binding_disarms_without_touching_current_b_namespace() {
+        let mut a_handles = vec![1, 2, 3, 4, 5];
+        let b_handles = vec![1, 2, 3, 4, 5];
+        let mut gl_calls = 0;
+        release_or_disarm(
+            &mut a_handles,
+            false,
+            |_| gl_calls += 1,
+            |handles| handles.fill(0),
+        );
+        assert_eq!(gl_calls, 0);
+        assert!(a_handles.iter().all(|handle| *handle == 0));
+        assert_eq!(b_handles, vec![1, 2, 3, 4, 5]);
+    }
+    #[test]
+    fn successful_binding_releases_before_named_egl_destruction() {
+        let mut handles = vec![1, 2, 3];
+        let mut events = vec![];
+        release_or_disarm(
+            &mut handles,
+            true,
+            |handles| {
+                events.push("release GL");
+                handles.fill(0);
+            },
+            |_| panic!("Successful binding must release"),
+        );
+        events.push("destroy named EGL context");
+        assert_eq!(events, vec!["release GL", "destroy named EGL context"]);
+        assert_eq!(handles, vec![0, 0, 0]);
     }
 }

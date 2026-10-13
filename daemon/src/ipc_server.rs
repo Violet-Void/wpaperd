@@ -88,133 +88,200 @@ pub fn handle_message(
     let message: IpcMessage = serde_json::from_slice(&buffer[..n])
         .wrap_err_with(|| format!("Failed to deserialize message {:?}", &buffer[..n]))?;
 
+    // Ordinary still commands never silently operate behind a motion session.
+    let still_monitors = match &message {
+        IpcMessage::NextWallpaper { monitors }
+        | IpcMessage::PreviousWallpaper { monitors }
+        | IpcMessage::ReloadWallpaper { monitors }
+        | IpcMessage::PauseWallpaper { monitors }
+        | IpcMessage::ResumeWallpaper { monitors }
+        | IpcMessage::TogglePauseWallpaper { monitors }
+        | IpcMessage::SetWallpaper { monitors, .. } => Some(monitors),
+        _ => None,
+    };
+
     // Handle IPC events.
-    let resp: Result<IpcResponse, IpcError> = match message {
-        IpcMessage::CurrentWallpaper { monitor } => wpaperd
-            .surfaces
-            .iter()
-            .find(|surface| surface.name() == monitor)
-            .map(|surface| surface.image_picker.current_image())
-            .map(|path| IpcResponse::CurrentWallpaper { path })
-            .ok_or(IpcError::MonitorNotFound { monitor }),
-        IpcMessage::AllWallpapers => Ok(IpcResponse::AllWallpapers {
-            entries: wpaperd
+    let resp: Result<IpcResponse, IpcError> = if still_monitors.is_some_and(|monitors| {
+        wpaperd.surfaces.iter().any(|s| {
+            s.motion_active() && (monitors.is_empty() || monitors.iter().any(|m| m == s.name()))
+        })
+    }) {
+        Err(IpcError::ValidationError(
+            "Stop the scene with 'wpaperctl scene stop' before a still-wallpaper command".into(),
+        ))
+    } else {
+        match message {
+            IpcMessage::StartScene {
+                path,
+                reduced_motion,
+            } => wpaperd
+                .start_motion(&path, reduced_motion, &qh)
+                .map(|_| IpcResponse::Ok)
+                .map_err(|e| IpcError::ValidationError(format!("Scene rejected: {e}"))),
+            IpcMessage::StopScene => {
+                wpaperd.stop_motion(&qh);
+                Ok(IpcResponse::Ok)
+            }
+            IpcMessage::SceneStatus => Ok(IpcResponse::SceneStatus(wpaperd.motion_status())),
+            IpcMessage::ShuffleScene | IpcMessage::PreviousScene | IpcMessage::FreezeScene => {
+                let result = {
+                    let mut shared = wpaperd.motion.borrow_mut();
+                    match shared.as_mut() {
+                        None => Err(color_eyre::eyre::eyre!("No active scene")),
+                        Some(p) => {
+                            let now = std::time::Instant::now();
+                            match message {
+                                IpcMessage::ShuffleScene => p.shuffle(now),
+                                IpcMessage::PreviousScene => p.previous(now),
+                                IpcMessage::FreezeScene => {
+                                    p.freeze(now);
+                                    Ok(())
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+                };
+                result
+                    .map(|_| {
+                        wpaperd.queue_motion(&qh);
+                        IpcResponse::Ok
+                    })
+                    .map_err(|e| IpcError::ValidationError(e.to_string()))
+            }
+            IpcMessage::CurrentWallpaper { monitor } => wpaperd
                 .surfaces
                 .iter()
-                .map(|surface| {
-                    (
-                        surface.name().to_string(),
-                        surface.image_picker.current_image(),
-                    )
-                })
-                .collect::<Vec<(String, PathBuf)>>(),
-        }),
-
-        IpcMessage::PreviousWallpaper { monitors } => {
-            check_monitors(wpaperd, &monitors).map(|_| {
-                for surface in collect_surfaces(wpaperd, monitors) {
-                    // Only auto-resume if paused by set, not explicit user pause
-                    if surface.pause_reason() == Some(PauseReason::Set) {
-                        surface.resume();
-                    }
-                    surface.image_picker.previous_image();
-                    surface.load_new_wallpaper();
-                }
-
-                IpcResponse::Ok
-            })
-        }
-
-        IpcMessage::NextWallpaper { monitors } => check_monitors(wpaperd, &monitors).map(|_| {
-            for surface in collect_surfaces(wpaperd, monitors) {
-                // Only auto-resume if paused by set, not explicit user pause
-                if surface.pause_reason() == Some(PauseReason::Set) {
-                    surface.resume();
-                }
-                surface.image_picker.next_image();
-                surface.load_new_wallpaper();
-            }
-
-            IpcResponse::Ok
-        }),
-
-        IpcMessage::ReloadWallpaper { monitors } => check_monitors(wpaperd, &monitors).map(|_| {
-            for surface in collect_surfaces(wpaperd, monitors) {
-                surface.image_picker.reload();
-                surface.load_new_wallpaper();
-                surface.queue_draw(&qh);
-            }
-
-            IpcResponse::Ok
-        }),
-
-        IpcMessage::PauseWallpaper { monitors } => check_monitors(wpaperd, &monitors).map(|_| {
-            for surface in collect_surfaces(wpaperd, monitors) {
-                surface.pause();
-            }
-            IpcResponse::Ok
-        }),
-
-        IpcMessage::ResumeWallpaper { monitors } => check_monitors(wpaperd, &monitors).map(|_| {
-            for surface in collect_surfaces(wpaperd, monitors) {
-                surface.resume();
-            }
-            IpcResponse::Ok
-        }),
-
-        IpcMessage::TogglePauseWallpaper { monitors } => {
-            check_monitors(wpaperd, &monitors).map(|_| {
-                for surface in collect_surfaces(wpaperd, monitors) {
-                    surface.toggle_pause();
-                }
-
-                IpcResponse::Ok
-            })
-        }
-
-        IpcMessage::GetStatus { monitors } => {
-            check_monitors(wpaperd, &monitors).map(|_| IpcResponse::DisplaysStatus {
-                entries: collect_surfaces(wpaperd, monitors)
+                .find(|surface| surface.name() == monitor)
+                .map(|surface| surface.image_picker.current_image())
+                .map(|path| IpcResponse::CurrentWallpaper { path })
+                .ok_or(IpcError::MonitorNotFound { monitor }),
+            IpcMessage::AllWallpapers => Ok(IpcResponse::AllWallpapers {
+                entries: wpaperd
+                    .surfaces
                     .iter()
                     .map(|surface| {
                         (
                             surface.name().to_string(),
-                            surface.status().to_string(),
-                            surface.get_remaining_duration(),
+                            surface.image_picker.current_image(),
                         )
                     })
-                    .collect(),
-            })
-        }
+                    .collect::<Vec<(String, PathBuf)>>(),
+            }),
 
-        IpcMessage::SetWallpaper { path, monitors } => {
-            if !path.exists() {
-                Err(IpcError::ValidationError(format!(
-                    "File not found: {}",
-                    path.display()
-                )))
-            } else if !path.is_file() {
-                Err(IpcError::ValidationError(format!(
-                    "Path is not a file: {}",
-                    path.display()
-                )))
-            } else if !new_mime_guess::from_path(&path)
-                .first()
-                .is_some_and(|mime| mime.type_() == "image")
-            {
-                Err(IpcError::ValidationError(format!(
-                    "Not a supported image format: {}",
-                    path.display()
-                )))
-            } else {
+            IpcMessage::PreviousWallpaper { monitors } => {
                 check_monitors(wpaperd, &monitors).map(|_| {
                     for surface in collect_surfaces(wpaperd, monitors) {
-                        surface.image_picker.set_image(path.clone());
-                        surface.pause_for_set();
+                        // Only auto-resume if paused by set, not explicit user pause
+                        if surface.pause_reason() == Some(PauseReason::Set) {
+                            surface.resume();
+                        }
+                        surface.image_picker.previous_image();
                         surface.load_new_wallpaper();
+                    }
+
+                    IpcResponse::Ok
+                })
+            }
+
+            IpcMessage::NextWallpaper { monitors } => {
+                check_monitors(wpaperd, &monitors).map(|_| {
+                    for surface in collect_surfaces(wpaperd, monitors) {
+                        // Only auto-resume if paused by set, not explicit user pause
+                        if surface.pause_reason() == Some(PauseReason::Set) {
+                            surface.resume();
+                        }
+                        surface.image_picker.next_image();
+                        surface.load_new_wallpaper();
+                    }
+
+                    IpcResponse::Ok
+                })
+            }
+
+            IpcMessage::ReloadWallpaper { monitors } => {
+                check_monitors(wpaperd, &monitors).map(|_| {
+                    for surface in collect_surfaces(wpaperd, monitors) {
+                        surface.image_picker.reload();
+                        surface.load_new_wallpaper();
+                        surface.queue_draw(&qh);
+                    }
+
+                    IpcResponse::Ok
+                })
+            }
+
+            IpcMessage::PauseWallpaper { monitors } => {
+                check_monitors(wpaperd, &monitors).map(|_| {
+                    for surface in collect_surfaces(wpaperd, monitors) {
+                        surface.pause();
                     }
                     IpcResponse::Ok
                 })
+            }
+
+            IpcMessage::ResumeWallpaper { monitors } => {
+                check_monitors(wpaperd, &monitors).map(|_| {
+                    for surface in collect_surfaces(wpaperd, monitors) {
+                        surface.resume();
+                    }
+                    IpcResponse::Ok
+                })
+            }
+
+            IpcMessage::TogglePauseWallpaper { monitors } => check_monitors(wpaperd, &monitors)
+                .map(|_| {
+                    for surface in collect_surfaces(wpaperd, monitors) {
+                        surface.toggle_pause();
+                    }
+
+                    IpcResponse::Ok
+                }),
+
+            IpcMessage::GetStatus { monitors } => {
+                check_monitors(wpaperd, &monitors).map(|_| IpcResponse::DisplaysStatus {
+                    entries: collect_surfaces(wpaperd, monitors)
+                        .iter()
+                        .map(|surface| {
+                            (
+                                surface.name().to_string(),
+                                surface.status().to_string(),
+                                surface.get_remaining_duration(),
+                            )
+                        })
+                        .collect(),
+                })
+            }
+
+            IpcMessage::SetWallpaper { path, monitors } => {
+                if !path.exists() {
+                    Err(IpcError::ValidationError(format!(
+                        "File not found: {}",
+                        path.display()
+                    )))
+                } else if !path.is_file() {
+                    Err(IpcError::ValidationError(format!(
+                        "Path is not a file: {}",
+                        path.display()
+                    )))
+                } else if !new_mime_guess::from_path(&path)
+                    .first()
+                    .is_some_and(|mime| mime.type_() == "image")
+                {
+                    Err(IpcError::ValidationError(format!(
+                        "Not a supported image format: {}",
+                        path.display()
+                    )))
+                } else {
+                    check_monitors(wpaperd, &monitors).map(|_| {
+                        for surface in collect_surfaces(wpaperd, monitors) {
+                            surface.image_picker.set_image(path.clone());
+                            surface.pause_for_set();
+                            surface.load_new_wallpaper();
+                        }
+                        IpcResponse::Ok
+                    })
+                }
             }
         }
     };

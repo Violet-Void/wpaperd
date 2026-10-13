@@ -49,6 +49,8 @@ pub struct Renderer {
     //transparent_texture: gl::types::GLuint,
     /// contains the progress of the current animation
     transition_status: TransitionStatus,
+    motion: Option<super::motion::MotionRenderer>,
+    prepared_motion: Option<super::motion::MotionRenderer>,
 }
 
 impl Renderer {
@@ -80,6 +82,8 @@ impl Renderer {
             prev_wallpaper,
             current_wallpaper,
             transition_status: TransitionStatus::Ended,
+            motion: None,
+            prepared_motion: None,
         };
 
         renderer
@@ -98,6 +102,7 @@ impl Renderer {
     }
 
     pub unsafe fn draw(&mut self) -> Result<()> {
+        self.restore_still()?;
         self.gl.Clear(gl::COLOR_BUFFER_BIT);
         self.check_error("Failed to clear the screen")?;
 
@@ -185,6 +190,9 @@ impl Renderer {
         offset: Option<f32>,
         display_info: &DisplayInfo,
     ) -> Result<()> {
+        unsafe {
+            self.gl.UseProgram(self.program);
+        }
         let display_width = display_info.scaled_width() as f32;
         let display_height = display_info.scaled_height() as f32;
         let display_ratio = display_width / display_height;
@@ -405,6 +413,7 @@ impl Renderer {
     }
 
     pub unsafe fn set_projection_matrix(&self, transform: Transform) -> Result<()> {
+        self.gl.UseProgram(self.program);
         let projection_matrix = projection_matrix(transform);
         let loc = self
             .gl
@@ -419,6 +428,97 @@ impl Renderer {
         self.check_error("calling Uniform1i")?;
 
         Ok(())
+    }
+
+    pub fn draw_scene(&mut self, frame: &crate::scene::Frame, display: &DisplayInfo) -> Result<()> {
+        if self
+            .motion
+            .as_ref()
+            .is_none_or(|m| m.scene_sha256 != frame.scene.sha256)
+        {
+            self.motion = None;
+            self.motion = Some(super::motion::MotionRenderer::new(
+                self.gl.clone(),
+                &frame.scene,
+            )?);
+        }
+        unsafe {
+            self.gl.BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+            self.gl.BindBuffer(gl::ELEMENT_ARRAY_BUFFER, self.eab);
+            self.motion.as_ref().unwrap().draw(frame, display)
+        }
+    }
+
+    pub fn clear_motion(&mut self) -> Result<()> {
+        self.motion = None;
+        self.prepared_motion = None;
+        unsafe { self.restore_still() }
+    }
+
+    pub fn prepare_motion(&mut self, scene: &crate::scene::Scene) -> Result<()> {
+        self.prepared_motion = None;
+        let result = super::motion::MotionRenderer::new(self.gl.clone(), scene);
+        self.restore_after_preparation()?;
+        self.prepared_motion = Some(result?);
+        Ok(())
+    }
+    fn restore_after_preparation(&self) -> Result<()> {
+        unsafe { self.restore_still() }
+    }
+    pub fn discard_prepared_motion(&mut self) {
+        self.prepared_motion = None;
+    }
+    pub fn install_prepared_motion(&mut self) {
+        self.motion = self.prepared_motion.take();
+    }
+
+    /// Called with the owning EGL context current and still alive.
+    pub fn release_resources(&mut self) {
+        self.motion = None;
+        self.prepared_motion = None;
+        self.prev_wallpaper.release();
+        self.current_wallpaper.release();
+        unsafe {
+            if self.eab != 0 {
+                self.gl.DeleteBuffers(1, &self.eab);
+                self.eab = 0;
+            }
+            if self.vbo != 0 {
+                self.gl.DeleteBuffers(1, &self.vbo);
+                self.vbo = 0;
+            }
+            if self.program != 0 {
+                self.gl.DeleteProgram(self.program);
+                self.program = 0;
+            }
+        }
+    }
+    /// When binding failed, let named EGL context destruction reclaim GPU handles.
+    pub fn disarm_resources(&mut self) {
+        if let Some(motion) = self.motion.as_mut() {
+            motion.disarm();
+        }
+        if let Some(prepared) = self.prepared_motion.as_mut() {
+            prepared.disarm();
+        }
+        self.prev_wallpaper.disarm();
+        self.current_wallpaper.disarm();
+        self.eab = 0;
+        self.vbo = 0;
+        self.program = 0;
+    }
+
+    unsafe fn restore_still(&self) -> Result<()> {
+        self.gl.Disable(gl::BLEND);
+        self.gl.ClearColor(0.0, 0.0, 0.0, 1.0);
+        self.gl.UseProgram(self.program);
+        self.gl.BindBuffer(gl::ARRAY_BUFFER, self.vbo);
+        self.gl.BindBuffer(gl::ELEMENT_ARRAY_BUFFER, self.eab);
+        self.gl.ActiveTexture(gl::TEXTURE0);
+        self.prev_wallpaper.bind()?;
+        self.gl.ActiveTexture(gl::TEXTURE1);
+        self.current_wallpaper.bind()?;
+        self.check_error("Failed to restore still renderer")
     }
 }
 
@@ -471,7 +571,7 @@ fn create_program(gl: &gl::Gl, transition: Transition) -> Result<gl::types::GLui
 }
 
 #[rustfmt::skip]
-fn projection_matrix(transform: Transform) -> [f32; 4] {
+pub(super) fn projection_matrix(transform: Transform) -> [f32; 4] {
     match transform {
         Transform::Normal => {
             [
@@ -535,10 +635,33 @@ impl Deref for Renderer {
 
 impl Drop for Renderer {
     fn drop(&mut self) {
-        unsafe {
-            self.gl.DeleteBuffers(1, &self.eab);
-            self.gl.DeleteBuffers(1, &self.vbo);
-            self.gl.DeleteProgram(self.program);
-        }
+        self.release_resources();
+    }
+}
+
+#[cfg(test)]
+mod resource_tests {
+    use super::*;
+    #[test]
+    fn disarmed_renderer_and_all_texture_destructors_issue_no_gl_calls() {
+        // Any GL call through this intentionally unloaded dispatch table panics.
+        let gl = Rc::new(gl::Gl::load_with(|_| std::ptr::null()));
+        let mut renderer = Renderer {
+            gl: gl.clone(),
+            program: 3,
+            vbo: 4,
+            eab: 5,
+            transition_time: 0,
+            prev_wallpaper: Wallpaper::test_texture(gl.clone(), 6),
+            current_wallpaper: Wallpaper::test_texture(gl.clone(), 7),
+            transition_status: TransitionStatus::Ended,
+            motion: Some(super::super::motion::MotionRenderer::test_resources(
+                gl.clone(),
+            )),
+            prepared_motion: Some(super::super::motion::MotionRenderer::test_resources(gl)),
+        };
+        renderer.disarm_resources();
+        assert_eq!((renderer.program, renderer.vbo, renderer.eab), (0, 0, 0));
+        drop(renderer);
     }
 }

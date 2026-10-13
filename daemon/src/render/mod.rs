@@ -1,5 +1,6 @@
 mod coordinates;
 mod egl_context;
+mod motion;
 mod renderer;
 mod shader;
 mod transition;

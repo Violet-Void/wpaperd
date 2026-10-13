@@ -64,6 +64,46 @@ pub enum EventSource {
     Paused(Duration),
 }
 
+/// Count existing callbacks so scene commands can coalesce requests and drain old still chains.
+#[derive(Default)]
+struct FrameRequests {
+    pending: usize,
+}
+impl FrameRequests {
+    fn request(&mut self, scene_owned: bool) -> bool {
+        if scene_owned && self.pending > 0 {
+            return false;
+        }
+        self.pending = self.pending.saturating_add(1);
+        true
+    }
+    fn received(&mut self) {
+        self.pending = self.pending.saturating_sub(1);
+    }
+}
+
+enum SceneDrawFailure<E> {
+    Bind(E),
+    Draw { error: E, fallback_drawn: bool },
+}
+
+/// Recovery may issue GL commands only after binding this context succeeded.
+fn draw_bound_scene<C, E>(
+    context: &mut C,
+    bind: impl FnOnce(&mut C) -> std::result::Result<(), E>,
+    draw: impl FnOnce(&mut C) -> std::result::Result<(), E>,
+    recover: impl FnOnce(&mut C) -> std::result::Result<(), E>,
+) -> std::result::Result<(), SceneDrawFailure<E>> {
+    bind(context).map_err(SceneDrawFailure::Bind)?;
+    if let Err(error) = draw(context) {
+        return Err(SceneDrawFailure::Draw {
+            error,
+            fallback_drawn: recover(context).is_ok(),
+        });
+    }
+    Ok(())
+}
+
 pub struct Surface {
     wl_surface: wl_surface::WlSurface,
     wl_output: WlOutput,
@@ -95,6 +135,8 @@ pub struct Surface {
     /// invalid_size (error 2 on wl_surface).  We therefore defer the set_buffer_scale call
     /// until draw() has just swapped a fresh buffer at the correct physical dimensions.
     pending_scale: Option<i32>,
+    motion: crate::scene::SharedMotion,
+    frame_requests: FrameRequests,
 }
 
 impl Surface {
@@ -155,6 +197,8 @@ impl Surface {
             skip_next_transition: first_transition,
             symlink_dir,
             pending_scale: None,
+            motion: wpaperd.motion.clone(),
+            frame_requests: FrameRequests::default(),
         };
 
         // Start loading the wallpaper as soon as possible (i.e. surface creation)
@@ -174,6 +218,67 @@ impl Surface {
 
     /// Returns true if something has been drawn to the surface
     fn draw(&mut self, qh: &QueueHandle<Wpaperd>) -> Result<()> {
+        match crate::scene::frame(&self.motion, &self.display_info) {
+            Ok(Some(frame)) => {
+                let adjusted_width = self.display_info.adjusted_width();
+                let adjusted_height = self.display_info.adjusted_height();
+                let context = self
+                    .context
+                    .as_mut()
+                    .ok_or_else(|| eyre!("EGL context unavailable for motion"))?;
+                let result = draw_bound_scene(
+                    context,
+                    |context| context.make_current(),
+                    |context| context.draw_scene(&frame, &self.display_info),
+                    |context| {
+                        context.renderer.clear_motion()?;
+                        context.draw()
+                    },
+                );
+                if let Err(failure) = result {
+                    let (err, fallback_drawn) = match failure {
+                        SceneDrawFailure::Bind(err) => (err, false),
+                        SceneDrawFailure::Draw {
+                            error,
+                            fallback_drawn,
+                        } => (error, fallback_drawn),
+                    };
+                    if let Some(controller) = self.motion.borrow_mut().as_mut() {
+                        controller.fail(format!("{}: {err}", self.display_info.name));
+                    }
+                    // A bind failure leaves the last buffer untouched. Shared recovery is one-shot
+                    // and independently binds each owning context before cleanup or still drawing.
+                    if fallback_drawn {
+                        if let Some(scale) = self.pending_scale.take() {
+                            self.wl_surface.set_buffer_scale(scale);
+                        }
+                        self.wl_surface
+                            .damage_buffer(0, 0, adjusted_width, adjusted_height);
+                        self.wl_surface.commit();
+                        self.window_drawn = true;
+                    }
+                    return Ok(());
+                }
+                if let Some(scale) = self.pending_scale.take() {
+                    self.wl_surface.set_buffer_scale(scale);
+                }
+                self.wl_surface
+                    .damage_buffer(0, 0, adjusted_width, adjusted_height);
+                self.window_drawn = true;
+                if frame.animating {
+                    self.queue_draw(qh);
+                } else {
+                    self.wl_surface.commit();
+                }
+                return Ok(());
+            }
+            Err(err) => {
+                if let Some(controller) = self.motion.borrow_mut().as_mut() {
+                    controller.fail(format!("{}: {err}", self.display_info.name));
+                }
+            }
+            Ok(None) => (),
+        }
         let loading_image = self.loading_image.is_some();
         let window_drawn = self.window_drawn;
         let adjusted_width = self.display_info.adjusted_width();
@@ -231,6 +336,20 @@ impl Surface {
         match self.draw(qh) {
             Ok(_) => {}
             Err(err) => {
+                // A failed scene/fallback must not enter the still renderer's retry loop.
+                let scene_owned = self
+                    .motion
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|p| p.outputs.iter().any(|o| o.output == self.name()));
+                if scene_owned {
+                    let message = format!("{}: {err}", self.name());
+                    if let Some(p) = self.motion.borrow_mut().as_mut() {
+                        p.fail(message.clone());
+                    }
+                    error!("Motion renderer stopped: {message}");
+                    return;
+                }
                 error!(
                     "{:?}",
                     err.wrap_err(format!(
@@ -241,7 +360,7 @@ impl Surface {
                 // The draw failed for some reason. Invalid the context and try to draw in the next
                 // frame
                 self.context = None;
-                self.wl_surface.frame(qh, self.wl_surface.clone());
+                self.request_frame(qh);
             }
         }
     }
@@ -250,6 +369,9 @@ impl Surface {
     // Returns true when it is loaded, false when we need to wait
     // Call surface::frame when this return false
     pub fn load_wallpaper(&mut self) -> Result<bool> {
+        if self.motion_active() {
+            return Ok(true);
+        }
         // If we were not already trying to load an image
         if self.loading_image.is_none() {
             if let Some(item) = self.image_picker.get_image_from_path(
@@ -655,6 +777,9 @@ impl Surface {
     /// Add a new timer in the event_loop for the current duration
     /// Stop if there is already a timer added
     pub fn add_timer(&mut self, handle: &LoopHandle<Wpaperd>, duration_left: Option<Duration>) {
+        if self.motion_active() {
+            return;
+        }
         // Timer is already running
         if matches!(self.event_source, EventSource::Running(_, _, _)) {
             return;
@@ -740,7 +865,10 @@ impl Surface {
     /// Remove the timer if pausing, and add a new timer with the remaining duration of the old
     /// timer when resuming.
     pub fn handle_pause_state(&mut self, handle: &LoopHandle<Wpaperd>) {
-        match (self.pause_reason.is_some(), &self.event_source) {
+        match (
+            self.pause_reason.is_some() || self.motion_active(),
+            &self.event_source,
+        ) {
             // Should pause, but timer is still currently running
             (true, EventSource::Running(registration_token, duration, instant)) => {
                 // remaining_duration returns None when the timer already expired (elapsed >=
@@ -762,8 +890,22 @@ impl Surface {
 
     #[inline]
     pub fn queue_draw(&mut self, qh: &QueueHandle<Wpaperd>) {
-        self.wl_surface.frame(qh, self.wl_surface.clone());
+        self.request_frame(qh);
         self.wl_surface.commit();
+    }
+
+    fn request_frame(&mut self, qh: &QueueHandle<Wpaperd>) {
+        let scene_owned = self
+            .motion
+            .borrow()
+            .as_ref()
+            .is_some_and(|p| p.outputs.iter().any(|o| o.output == self.name()));
+        if self.frame_requests.request(scene_owned) {
+            self.wl_surface.frame(qh, self.wl_surface.clone());
+        }
+    }
+    pub fn frame_callback_received(&mut self) {
+        self.frame_requests.received();
     }
 
     #[inline]
@@ -842,6 +984,9 @@ impl Surface {
     }
 
     pub fn status(&self) -> &'static str {
+        if self.motion_active() {
+            return "motion";
+        }
         if self.wallpaper_info.path.is_dir() {
             if self.pause_reason.is_some() {
                 "paused"
@@ -911,6 +1056,11 @@ impl Surface {
     /// Check if the context is valid, and try to recreate it if needed
     #[inline]
     pub fn check_context(&mut self, egl_display: egl::Display, qh: &QueueHandle<Wpaperd>) {
+        if self.motion.borrow().as_ref().is_some_and(|p| {
+            p.failure.is_some() && p.outputs.iter().any(|o| o.output == self.name())
+        }) {
+            return;
+        }
         // The context is still valid
         if self.context.is_some() {
             return;
@@ -939,17 +1089,17 @@ impl Surface {
                         self.try_drawing(qh);
                     }
                     Ok(_) => {
-                        self.wl_surface.frame(qh, self.wl_surface.clone());
+                        self.request_frame(qh);
                     }
                     Err(err) => {
-                        self.wl_surface.frame(qh, self.wl_surface.clone());
+                        self.request_frame(qh);
                         warn!("{err:?}");
                     }
                 }
             }
             Err(err) => {
                 error!("{err:?}");
-                self.wl_surface.frame(qh, self.wl_surface.clone());
+                self.request_frame(qh);
             }
         }
     }
@@ -958,6 +1108,48 @@ impl Surface {
         self.context
             .as_mut()
             .ok_or_else(|| eyre!("EGL context is not available"))
+    }
+
+    pub fn display_info(&self) -> &DisplayInfo {
+        &self.display_info
+    }
+    pub fn motion_active(&self) -> bool {
+        self.motion.borrow().as_ref().is_some_and(|p| {
+            p.failure.is_none() && p.outputs.iter().any(|o| o.output == self.name())
+        })
+    }
+    pub fn ensure_timer(&mut self, handle: &LoopHandle<Wpaperd>) {
+        if matches!(self.event_source, EventSource::NotSet) {
+            self.add_timer(handle, None);
+        }
+    }
+    pub fn restore_still(&mut self, qh: &QueueHandle<Wpaperd>) {
+        if let Some(context) = self.context.as_mut() {
+            if context.make_current().is_ok() {
+                context.renderer.clear_motion().ok();
+                context.renderer.transition_finished();
+            }
+        }
+        self.load_new_wallpaper();
+        self.queue_draw(qh);
+    }
+    pub fn prepare_motion(&mut self, scene: &crate::scene::Scene) -> Result<()> {
+        let context = self.get_context()?;
+        context.make_current()?;
+        context.renderer.prepare_motion(scene)
+    }
+    pub fn discard_prepared_motion(&mut self) {
+        if let Some(context) = self.context.as_mut() {
+            if context.make_current().is_ok() {
+                context.renderer.discard_prepared_motion();
+            }
+        }
+    }
+    pub fn install_prepared_motion(&mut self) -> Result<()> {
+        let context = self.get_context()?;
+        context.make_current()?;
+        context.renderer.install_prepared_motion();
+        Ok(())
     }
 }
 
@@ -974,8 +1166,7 @@ impl Drop for Surface {
             if err.kind() != std::io::ErrorKind::NotFound {
                 warn!(
                     "{:?}",
-                    eyre!(err)
-                        .wrap_err(format!("Failed to remove symlink {link:?}"))
+                    eyre!(err).wrap_err(format!("Failed to remove symlink {link:?}"))
                 );
             }
         }
@@ -993,5 +1184,116 @@ fn remaining_duration(duration: Duration, image_changed: Instant) -> Option<Dura
         None
     } else {
         Some(duration - diff)
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::{draw_bound_scene, FrameRequests, SceneDrawFailure};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    struct FakeContext {
+        current: char,
+        resources: BTreeMap<char, BTreeSet<u32>>,
+        operations: Vec<&'static str>,
+    }
+    fn two_contexts() -> FakeContext {
+        FakeContext {
+            current: 'B',
+            resources: BTreeMap::from([
+                ('A', BTreeSet::from([1, 2])),
+                ('B', BTreeSet::from([1, 2])),
+            ]),
+            operations: vec![],
+        }
+    }
+    #[test]
+    fn failed_scene_bind_never_draws_or_deletes_in_the_other_context() {
+        let mut context = two_contexts();
+        let before = context.resources.clone();
+        let result = draw_bound_scene(
+            &mut context,
+            |_| Err("injected A bind failure"),
+            |context| {
+                context.operations.push("draw");
+                Ok(())
+            },
+            |context| {
+                context.operations.push("recover");
+                context.resources.get_mut(&context.current).unwrap().clear();
+                Ok(())
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(SceneDrawFailure::Bind("injected A bind failure"))
+        ));
+        assert_eq!(context.current, 'B');
+        assert!(context.operations.is_empty());
+        assert_eq!(context.resources, before);
+    }
+    #[test]
+    fn failed_draw_recovers_once_in_its_bound_context_and_preserves_b() {
+        let mut context = two_contexts();
+        let b = context.resources[&'B'].clone();
+        let result = draw_bound_scene(
+            &mut context,
+            |context| {
+                context.current = 'A';
+                Ok(())
+            },
+            |context| {
+                assert_eq!(context.current, 'A');
+                context.operations.push("draw");
+                Err("injected draw failure")
+            },
+            |context| {
+                assert_eq!(context.current, 'A');
+                context.operations.push("recover");
+                context.resources.get_mut(&'A').unwrap().clear();
+                Ok(())
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(SceneDrawFailure::Draw {
+                error: "injected draw failure",
+                fallback_drawn: true
+            })
+        ));
+        assert_eq!(context.operations, vec!["draw", "recover"]);
+        assert!(context.resources[&'A'].is_empty());
+        assert_eq!(context.resources[&'B'], b);
+    }
+    #[test]
+    fn repeated_scene_commands_have_one_pending_callback() {
+        let mut requests = FrameRequests::default();
+        assert!(requests.request(true));
+        for _ in 0..100 {
+            assert!(!requests.request(true));
+        }
+        assert_eq!(requests.pending, 1);
+        requests.received();
+        assert_eq!(requests.pending, 0);
+        assert!(requests.request(true));
+        assert_eq!(requests.pending, 1);
+    }
+    #[test]
+    fn preexisting_still_callbacks_drain_to_one_scene_chain() {
+        let mut requests = FrameRequests::default();
+        for _ in 0..3 {
+            assert!(requests.request(false));
+        }
+        for remaining in [2, 1] {
+            requests.received();
+            assert_eq!(requests.pending, remaining);
+            assert!(!requests.request(true));
+        }
+        requests.received();
+        assert!(requests.request(true));
+        assert_eq!(requests.pending, 1);
+        // A final frozen/static draw does not request another frame.
+        requests.received();
+        assert_eq!(requests.pending, 0);
     }
 }
