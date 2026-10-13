@@ -158,6 +158,7 @@ impl Wpaperd {
         let previous = self.motion.borrow_mut().take();
         *self.motion.borrow_mut() = Some(playback);
         self.motion_fallback_applied = false;
+        let mut activation_error = None;
         for surface in &mut self.surfaces {
             if surface.motion_active() {
                 if let Err(e) = surface.install_prepared_motion() {
@@ -166,6 +167,7 @@ impl Wpaperd {
                         .as_mut()
                         .unwrap()
                         .fail(e.to_string());
+                    activation_error = Some(e);
                 }
             } else if previous
                 .as_ref()
@@ -173,6 +175,10 @@ impl Wpaperd {
             {
                 surface.restore_still(qh);
             }
+        }
+        if let Some(error) = activation_error {
+            self.reconcile_motion_failure(qh);
+            return Err(error.wrap_err("Scene activation entered static fallback"));
         }
         self.queue_motion(qh);
         Ok(())

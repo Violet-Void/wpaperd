@@ -26,7 +26,6 @@ fn main() {
 
     let mut json_resp = false;
 
-    let mut conn = UnixStream::connect(socket_path().unwrap()).unwrap();
     let msg = match args.subcmd {
         SubCmd::Scene { command } => match command {
             SceneCommand::Start {
@@ -36,7 +35,12 @@ fn main() {
                 path: if path.is_absolute() {
                     path
                 } else {
-                    std::env::current_dir().unwrap().join(path)
+                    std::env::current_dir()
+                        .unwrap_or_else(|error| {
+                            eprintln!("Cannot resolve relative scene path: {error}");
+                            std::process::exit(1);
+                        })
+                        .join(path)
                 },
                 reduced_motion,
             },
@@ -92,6 +96,7 @@ fn main() {
         }
     };
 
+    let mut conn = UnixStream::connect(socket_path().unwrap()).unwrap();
     conn.write_all(&serde_json::to_vec(&msg).unwrap()).unwrap();
     let mut buf = String::new();
     conn.read_to_string(&mut buf).unwrap();

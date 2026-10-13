@@ -235,6 +235,14 @@ def inside(args):
         def frames():
             return (root / "daemon.log").read_text(errors="replace").count(".frame(")
 
+        vanished = root / "vanished-cwd"
+        vanished.mkdir()
+        script = "import os,sys;os.chdir(sys.argv[1]);os.rmdir(sys.argv[1]);os.execv(sys.argv[2],[sys.argv[2],'scene','start','.'])"
+        proc = subprocess.run(["/usr/bin/python3", "-c", script, str(vanished), str(args.binaries / "wpaperctl")],
+                              capture_output=True, text=True, timeout=10)
+        assert proc.returncode == 1 and "Cannot resolve relative scene path" in proc.stderr
+        assert "panicked" not in proc.stderr
+        result["removed_cwd_cli_error"] = True
         time.sleep(.5)
         baseline = shot("still-before")
         assert baseline.getpixel((200, 180)) == (41, 49, 63)
@@ -374,15 +382,18 @@ def inside(args):
         pool.mkdir()
         for i, color in enumerate(((41, 49, 63), (64, 88, 112), (123, 91, 42))):
             Image.new("RGBA", (800, 600), (*color, 255)).save(pool / (str(i) + ".png"))
+        def save_config(text):
+            with config.open("r+") as stream:
+                stream.write(text.ljust(4096))
+                stream.flush()
+
         def save_directory_config(duration):
             text = ('[default]\npath=' + json.dumps(str(pool)) +
                     '\nmode="stretch"\ntransition-time=0\nsorting="ascending"\n')
             if duration is not None:
                 text += 'duration=' + json.dumps(duration) + '\n'
             # Preserve the watched inode and avoid a transient truncated configuration.
-            with config.open("r+") as stream:
-                stream.write(text.ljust(4096))
-                stream.flush()
+            save_config(text)
 
         def reload_duration(duration):
             save_directory_config(duration)
@@ -479,6 +490,60 @@ def inside(args):
             assert shot("detour-previous-" + str(directory)).tobytes() == previous_pixels.tobytes()
             assert json.loads(cli("status", "--json", "Virtual-0")) == json.loads(previous_state)
             result["forced_" + ("directory" if directory else "file") + "_restoration"] = True
+        # A watcher path update is deferred until explicit Stop, without losing the selection.
+        cli("scene", "start", folder, "--reduced-motion")
+        time.sleep(.2)
+        scene_pixels = shot("before-config-selection")
+        save_config('[default]\npath=' + json.dumps(str(alternate)) + '\nmode="stretch"\ntransition-time=0\n')
+        deadline = time.monotonic() + 5
+        while json.loads(cli("status", "--json", "Virtual-0"))[0]["duration_left"] is not None:
+            assert daemon.poll() is None and time.monotonic() < deadline
+            time.sleep(.05)
+        assert shot("held-config-selection").tobytes() == scene_pixels.tobytes()
+        cli("scene", "stop")
+        deadline = time.monotonic() + 5
+        while cli("get", "Virtual-0").strip() != str(alternate):
+            assert daemon.poll() is None and time.monotonic() < deadline
+            time.sleep(.05)
+        time.sleep(.3)
+        assert shot("restored-config-selection").getpixel((200, 180)) == (21, 131, 64)
+        cli("scene", "stop")
+        time.sleep(.2)
+        assert cli("get", "Virtual-0").strip() == str(alternate)
+        result["deferred_config_selection_after_stop"] = True
+
+        # Restart only the owned private daemon to establish ordinary grouped sorting.
+        stop_owned(daemon)
+        socket.unlink(missing_ok=True)
+        save_config('[default]\npath=' + json.dumps(str(pool)) +
+                    '\nmode="stretch"\ntransition-time=0\ngroup=1\nduration="300ms"\n')
+        daemon = subprocess.Popen([str(args.binaries / "wpaperd"), "--config", str(config), "--verbose"],
+                                  env=dict(os.environ, WAYLAND_DEBUG="1"), stdout=logs[1],
+                                  stderr=subprocess.STDOUT, start_new_session=True)
+        deadline = time.monotonic() + 15
+        while not socket.exists():
+            assert daemon.poll() is None and time.monotonic() < deadline
+            time.sleep(.1)
+        time.sleep(.5)
+        cli("scene", "start", missing, "--reduced-motion")
+        time.sleep(.2)
+        held = shot("group-mapped-rest")
+        before = frames()
+        time.sleep(1.2)
+        assert shot("group-mapped-stable").tobytes() == held.tobytes()
+        result["group_partial_mapping_callbacks"] = frames() - before
+        assert result["group_partial_mapping_callbacks"] < 80
+        cli("scene", "start", folder)
+        cli("scene", "shuffle")
+        time.sleep(2.2)
+        before = frames()
+        time.sleep(.8)
+        result["group_scene_idle_callbacks"] = frames() - before
+        assert result["group_scene_idle_callbacks"] == 0
+        cli("scene", "stop")
+        time.sleep(.6)
+        assert str(pool) in cli("get", "Virtual-0")
+        result["grouped_callbacks_and_restore"] = True
         assert daemon.poll() is None, "Daemon exited during scenarios"
         text = (root / "daemon.log").read_text(errors="replace")
         marker = re.search(r"\b(?:ERROR|WARN|WARNING|panicked)\b|protocol\s+error|failed\s+to\s+(?:draw|load\s+scene)",

@@ -82,6 +82,7 @@ fn held_duration_after_reload(
     new_duration: Option<Duration>,
     path_changed: bool,
     now: Instant,
+    transition_time: Duration,
 ) -> Option<Duration> {
     let elapsed = if path_changed {
         Duration::ZERO
@@ -94,23 +95,30 @@ fn held_duration_after_reload(
             _ => Duration::ZERO,
         }
     };
-    new_duration.map(|duration| duration.saturating_sub(elapsed))
+    new_duration.map(|duration| {
+        let remaining = duration.saturating_sub(elapsed);
+        if matches!(source, EventSource::NotSet) && !path_changed {
+            remaining.saturating_add(transition_time)
+        } else {
+            remaining
+        }
+    })
 }
 
 /// Count existing callbacks so scene commands can coalesce requests and drain old still chains.
 #[derive(Default)]
-struct FrameRequests {
+pub(crate) struct FrameRequests {
     pending: usize,
 }
 impl FrameRequests {
-    fn request(&mut self, scene_owned: bool) -> bool {
+    pub(crate) fn request(&mut self, scene_owned: bool) -> bool {
         if scene_owned && self.pending > 0 {
             return false;
         }
         self.pending = self.pending.saturating_add(1);
         true
     }
-    fn received(&mut self) {
+    pub(crate) fn received(&mut self) {
         self.pending = self.pending.saturating_sub(1);
     }
 }
@@ -169,7 +177,9 @@ pub struct Surface {
     /// until draw() has just swapped a fresh buffer at the correct physical dimensions.
     pending_scale: Option<i32>,
     motion: crate::scene::SharedMotion,
-    frame_requests: FrameRequests,
+    frame_requests: Rc<crate::wallpaper_groups::FrameScheduler>,
+    wallpaper_groups: Rc<RefCell<WallpaperGroups>>,
+    deferred_still_selection: bool,
 }
 
 impl Surface {
@@ -185,6 +195,14 @@ impl Surface {
         // Commit the surface
         wl_surface.commit();
 
+        let frame_requests = Rc::new(crate::wallpaper_groups::FrameScheduler::new(
+            wpaperd.motion.clone(),
+            display_info.name.clone(),
+        ));
+        wpaperd
+            .wallpaper_groups
+            .borrow_mut()
+            .register(&wl_surface, &frame_requests);
         let image_picker = ImagePicker::new(
             &wallpaper_info,
             &wl_surface,
@@ -231,7 +249,9 @@ impl Surface {
             symlink_dir,
             pending_scale: None,
             motion: wpaperd.motion.clone(),
-            frame_requests: FrameRequests::default(),
+            frame_requests,
+            wallpaper_groups: wpaperd.wallpaper_groups.clone(),
+            deferred_still_selection: false,
         };
 
         // Start loading the wallpaper as soon as possible (i.e. surface creation)
@@ -650,6 +670,9 @@ impl Surface {
             return;
         }
 
+        if self.motion_owned() && self.wallpaper_info.path != wallpaper_info.path {
+            self.deferred_still_selection = true;
+        }
         // Put the new value in place
         std::mem::swap(&mut self.wallpaper_info, &mut wallpaper_info);
         // if the two paths are different and the new path is a directory but doesn't contain the
@@ -665,7 +688,7 @@ impl Surface {
             path_changed,
             &wallpaper_groups,
         );
-        if path_changed {
+        if path_changed && !self.motion_owned() {
             // ask the image_picker to pick a new a image
             self.image_picker.next_image();
             self.load_new_wallpaper();
@@ -745,6 +768,7 @@ impl Surface {
                     self.wallpaper_info.duration,
                     path_changed,
                     Instant::now(),
+                    Duration::from_millis(self.wallpaper_info.transition_time.into()),
                 );
                 if let EventSource::Running(token, _, _) = self.event_source {
                     handle.remove(token);
@@ -953,8 +977,7 @@ impl Surface {
     }
 
     fn request_frame(&mut self, qh: &QueueHandle<Wpaperd>) {
-        let scene_owned = self.motion_owned();
-        if self.frame_requests.request(scene_owned) {
+        if self.frame_requests.request() {
             self.wl_surface.frame(qh, self.wl_surface.clone());
         }
     }
@@ -1195,7 +1218,13 @@ impl Surface {
         // already selected load: running the picker again would replace a forced wallpaper
         // and consume its detour state even when no new image is needed. A load completion
         // notification may have arrived during scene mode, so resume it explicitly here.
-        if self.loading_image.is_some() || self.image_picker.current_image().as_os_str().is_empty()
+        if self.deferred_still_selection && !self.motion_owned() {
+            self.deferred_still_selection = false;
+            self.loading_image = None;
+            self.image_picker.next_image();
+            self.load_new_wallpaper();
+        } else if self.loading_image.is_some()
+            || self.image_picker.current_image().as_os_str().is_empty()
         {
             self.load_new_wallpaper();
         }
@@ -1223,6 +1252,9 @@ impl Surface {
 
 impl Drop for Surface {
     fn drop(&mut self) {
+        self.wallpaper_groups
+            .borrow_mut()
+            .unregister(&self.wl_surface);
         // Do not leave any symlink when a surface gets destroyed.
         // Use remove_file directly rather than checking link.exists() first:
         // exists() follows symlinks and returns false for dangling symlinks
@@ -1273,35 +1305,87 @@ mod frame_tests {
         let now = Instant::now();
         let seconds = Duration::from_secs;
         let mut source = EventSource::NotSet;
-        let left =
-            held_duration_after_reload(&source, None, Some(seconds(10)), false, now).unwrap();
+        assert_eq!(
+            held_duration_after_reload(&source, None, Some(seconds(10)), false, now, seconds(2)),
+            Some(seconds(12))
+        );
+        let left = held_duration_after_reload(
+            &source,
+            None,
+            Some(seconds(10)),
+            false,
+            now,
+            Duration::ZERO,
+        )
+        .unwrap();
         assert_eq!(left, seconds(10));
         source = EventSource::Paused(left);
-        let left =
-            held_duration_after_reload(&source, Some(seconds(10)), Some(seconds(20)), false, now)
-                .unwrap();
+        let left = held_duration_after_reload(
+            &source,
+            Some(seconds(10)),
+            Some(seconds(20)),
+            false,
+            now,
+            Duration::ZERO,
+        )
+        .unwrap();
         assert_eq!(left, seconds(20));
         source = EventSource::Paused(seconds(7));
         assert_eq!(
-            held_duration_after_reload(&source, Some(seconds(10)), Some(seconds(2)), false, now),
+            held_duration_after_reload(
+                &source,
+                Some(seconds(10)),
+                Some(seconds(2)),
+                false,
+                now,
+                Duration::ZERO
+            ),
             Some(Duration::ZERO)
         );
         assert_eq!(
-            held_duration_after_reload(&source, Some(seconds(10)), Some(seconds(20)), false, now),
+            held_duration_after_reload(
+                &source,
+                Some(seconds(10)),
+                Some(seconds(20)),
+                false,
+                now,
+                Duration::ZERO
+            ),
             Some(seconds(17))
         );
         assert_eq!(
-            held_duration_after_reload(&source, Some(seconds(10)), Some(seconds(20)), true, now),
+            held_duration_after_reload(
+                &source,
+                Some(seconds(10)),
+                Some(seconds(20)),
+                true,
+                now,
+                Duration::ZERO
+            ),
             Some(seconds(20))
         );
         assert_eq!(
-            held_duration_after_reload(&source, Some(seconds(10)), None, false, now),
+            held_duration_after_reload(
+                &source,
+                Some(seconds(10)),
+                None,
+                false,
+                now,
+                Duration::ZERO
+            ),
             None
         );
         // A transition-inclusive remainder larger than the configured duration does not underflow.
         source = EventSource::Paused(seconds(11));
         assert_eq!(
-            held_duration_after_reload(&source, Some(seconds(10)), Some(seconds(20)), false, now),
+            held_duration_after_reload(
+                &source,
+                Some(seconds(10)),
+                Some(seconds(20)),
+                false,
+                now,
+                Duration::ZERO
+            ),
             Some(seconds(20))
         );
     }

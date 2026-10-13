@@ -741,7 +741,7 @@ pub(super) fn decode_parent(raw: &[u8]) -> Result<Value> {
     ensure!(raw.len() <= JSON_LIMIT, "Parent JSON byte budget exceeded");
     // Locate the value with the JSON tokenizer; strings and nested keys cannot select it.
     let mut i = 0;
-    let mut depth = 0;
+    let mut depth: usize = 0;
     let mut workflow = false;
     let mut opaque_depth = None;
     let mut out = Vec::with_capacity(raw.len());
@@ -788,7 +788,9 @@ pub(super) fn decode_parent(raw: &[u8]) -> Result<Value> {
                 if opaque_depth == Some(depth) {
                     opaque_depth = None;
                 }
-                depth -= 1;
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| eyre!("Invalid parent JSON nesting"))?;
                 out.push(raw[i]);
                 i += 1;
             }

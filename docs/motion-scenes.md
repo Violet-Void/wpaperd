@@ -10,6 +10,8 @@
 
 ## Use it
 
+The scene commands require matching daemon/client builds. The Rust `wpaperd-ipc` crate is version
+2.0.0 because its public enums gained variants; existing still IPC wire messages retain their form.
 After installing this version, run the ordinary Wpaperd daemon with its existing still configuration.
 Prepare a separate portable package containing producer `scene.json`, `arrangements.json`, all
 declared PNGs, any copied parent manifest, and the consumer `outputs.json` below. Use actual verified
@@ -36,13 +38,16 @@ there is no queued animation backlog. Commands while frozen retain the sampled p
 An unsafe retarget fails and leaves the preceding transition intact.
 Scene requests share one pending frame callback per surface; callbacks already queued in still mode
 drain before a new scene callback is requested. Repeated commands replace the target without creating
-parallel callback chains.
+parallel callback chains. Grouped still invalidations use the same tracker before activation and
+skip mapped scene outputs during playback.
 
 Still navigation, set, reload and pause commands targeting mapped outputs require `scene stop` first.
 This also applies to a failed scene in static fallback. Its still timer and any fresh image selection
 remain held until mode-off; a timer already due in the activation dispatch cannot advance navigation.
 Configuration duration reloads update the held remainder, including initially unset timers and an
-exhausted zero remainder, without selecting an image behind the scene.
+exhausted zero remainder, without selecting an image behind the scene. A newly configured timer
+retains the ordinary transition allowance. Watcher path changes defer one still selection until
+explicit Stop; duration-only changes preserve a forced still detour.
 Unmapped outputs retain their ordinary wallpaper operation. Still configuration, image pool, current
 image links and explicit pause state retain their existing roles; scenes are never inferred from an
 image filename or ordinary still command. Playback is opt-in through IPC and is not persisted across
@@ -144,6 +149,8 @@ root `generation_workflow` field; geometry still requires finite JSON.
 Producer limits remain 1 MiB + 1 byte per JSON, 32 JSON levels, 32768 nodes, 256 KiB strings,
 8 assets, 64 MiB encoded per PNG, 128 MiB scene/parent bytes, 4096 PNG chunks, 120 million decoded
 pixels, 32768 pixels per canvas axis and 80 million canvas pixels. Sprites are at most 4096 square.
+The producer's core layout normalization separately bounds its input to 64 KiB, 2048 nodes,
+depth 32 and 8192 UTF-8 bytes per string/key; the larger outer JSON limits do not replace these.
 The two additional consumer sidecars each have the same bounded JSON limits. Stream validation
 discards at most 64 KiB output per step and requires exact RGBA/Adam7 scanline geometry.
 
@@ -154,7 +161,9 @@ render or mapping failures stop scene animation, restore the existing still path
 releases scene textures and decoded data, restores the prior still frame/pool and timer remainder,
 and preserves an explicit user pause. Static/frozen playback requests no recurring frame callbacks.
 If an EGL context cannot be made current, scene failure performs no GL draw or cleanup in another
-output's context. Teardown releases GL handles before destroying a successfully bound context;
+output's context. A post-preflight activation binding failure reports an IPC error and enters
+static fallback instead of returning success. Teardown releases GL handles before destroying a
+successfully bound context;
 on binding failure it disarms their Rust destructors and lets named EGL destruction reclaim them.
 Texture construction owns its allocation before activation/upload, so failed uploads release new
 textures in the bound context. Shader construction likewise owns unattached shaders through every
@@ -219,14 +228,17 @@ A subsequent run used the unchanged published producer bundle from
 The exact scene SHA256 was `f6685ea9631a2de0e206caedb644e3456d0f8aa998fcd9ee151a904cf35dc819`;
 the arrangement SHA256 was `e989a92f9ec7171b3b9abd7278206f8626faa6f9adcfeafdf33f83a48e08f58f`.
 Both panels of all three rests matched the bound static exports within one channel value. Orbit
-requested 218 callbacks and the 20-command burst 226; static/frozen idle requested zero frames.
+requested 218 callbacks and the 20-command burst 224; static/frozen idle requested zero frames.
 Forced file/directory still restoration and the no-scene Previous controls passed, with no fresh
 daemon errors or warnings. A one-second automatic still timer stayed held beyond its deadline in
 scene mode, then resumed and advanced once after mode-off. Reloading duration through unset, ten,
 and twenty seconds passed without a crash. Shortening an elapsed timer to zero during scene mode
-preserved the forced still image, symlink, paused status and subsequent Previous detour. All 48
+preserved the forced still image, symlink, paused status and subsequent Previous detour. All 52
 locked Rust tests passed; shader and texture fault tests cover cleanup in the bound context.
-Unsafe mid-flight retargets may reject
+The extended private run also passed a removed-working-directory CLI error, deferred watcher path
+selection after Stop, partially mapped grouped sorting (16 callbacks across both outputs over
+1.2 seconds), and fully mapped grouped-scene idle with zero callbacks. Fresh daemon logs contained
+no errors or warnings. Unsafe mid-flight retargets may reject
 under the published constraints;
 the harness checks retained target/history when that happens rather than requiring every burst
 command to succeed.

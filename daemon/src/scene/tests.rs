@@ -648,3 +648,93 @@ fn orbit_normalizes_tiny_nonzero_movement_before_multiplying_offset() {
     fixture.write();
     super::load(&fixture.path, false).unwrap();
 }
+
+#[test]
+fn malformed_parent_delimiters_return_errors_without_panics() {
+    for raw in [
+        b"}".as_slice(),
+        b"]",
+        b"{}]",
+        b"{]",
+        b"{\"generation_workflow\":[NaN]}]",
+        b"{\"generation_workflow\":NaN}}",
+    ] {
+        assert!(loader::decode_parent(raw).is_err(), "{:?}", raw);
+    }
+}
+
+#[test]
+fn producer_layout_metadata_limits_match_core_normalization() {
+    for (metadata, accepted) in [
+        (json!("x".repeat(8192)), true),
+        (json!((0..1600).collect::<Vec<u32>>()), true),
+        (json!("x".repeat(9000)), false),
+        (json!((0..3000).collect::<Vec<u32>>()), false),
+        (json!("x".repeat(70000)), false),
+    ] {
+        let mut fixture = Fixture::new();
+        fixture.scene["plan"]["monitors"][0]["metadata"] = metadata;
+        // The outer JSON budget is deliberately larger than core's inner layout budget.
+        loader::decode_json(&serde_json::to_vec(&fixture.scene).unwrap()).unwrap();
+        if accepted {
+            let plan = normalize(&fixture.scene["plan"]).unwrap();
+            let fingerprint = sha256(canonical(&plan).as_bytes());
+            fixture.scene["layout_fingerprint"] = json!(fingerprint);
+            fixture.arrangements["scene"]["layout_fingerprint"] = json!(fingerprint);
+            fixture.outputs["layout_fingerprint"] = json!(fingerprint);
+            fixture.rebind();
+            super::load(&fixture.path, false).unwrap();
+        } else {
+            assert!(normalize(&fixture.scene["plan"]).is_err());
+        }
+    }
+}
+
+#[test]
+fn group_and_surface_requests_share_callback_accounting() {
+    let fixture = Fixture::new();
+    let motion = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let surface = std::rc::Rc::new(crate::wallpaper_groups::FrameScheduler::new(
+        motion.clone(),
+        "Virtual-0".into(),
+    ));
+    let group = surface.clone();
+    for _ in 0..3 {
+        assert!(group.request_group());
+    }
+    *motion.borrow_mut() = Some(super::load(&fixture.path, false).unwrap());
+    for _ in 0..20 {
+        assert!(!surface.request());
+        assert!(!group.request_group());
+    }
+    for _ in 0..2 {
+        group.received();
+        assert!(!surface.request());
+    }
+    group.received();
+    assert!(surface.request());
+    assert!(!group.request_group());
+    assert!(!surface.request());
+    motion
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .fail("injected fallback".into());
+    assert!(!group.request_group());
+    surface.received();
+    assert!(surface.request());
+    motion.borrow_mut().take();
+    assert!(group.request_group());
+    assert!(group.request_group());
+}
+
+#[test]
+fn malformed_parent_package_is_rejected_after_exact_hash_binding() {
+    for raw in [b"{}]".as_slice(), b"{\"generation_workflow\":[NaN]}]"] {
+        let mut fixture = Fixture::new();
+        fs::write(fixture.path.join("parent-manifest.json"), raw).unwrap();
+        fixture.scene["parent"] = json!({"file":"parent-manifest.json","sha256":sha256(raw),"run_id":"123456789a","layout_fingerprint":fixture.scene["layout_fingerprint"]});
+        fixture.rebind();
+        assert!(super::load(&fixture.path, false).is_err());
+    }
+}
