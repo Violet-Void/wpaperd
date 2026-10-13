@@ -1,0 +1,3480 @@
+{
+  "complete": false,
+  "scanId": "bdee8bf1-1977-4dd3-af3a-ea2d503003ca",
+  "scope": {
+    "summary": "Standard static security scan of the entire repository at the SDK-registered git revision.",
+    "artifactsReviewed": [
+      "All 63 tracked repository files."
+    ],
+    "runtimeStatus": "Static, read-only source review; no application execution.",
+    "validationMode": "Independent source-backed static validation.",
+    "context": "No additional user security context, supplied threat model, repository SECURITY.md guidance, scoped-path file, or knowledge base was provided.",
+    "limitations": [
+      "One preserved algorithmic-complexity candidate remains to validate.",
+      "Static, offline source review did not execute the application."
+    ]
+  },
+  "threatModel": {
+    "format": "markdown",
+    "content": "# Threat Model\n\nph-vote is a self-hosted FastAPI application for browsing and rating video clips. A browser reaches static pages and JSON/media routes in app/api.py; app/guards.py enforces client-network and Host allowlists plus origin/fetch-metadata checks, while app/server.py composes file-backed store/index/media services. Runtime state is stored under configured data directories, and selected operations invoke yt-dlp/ffmpeg or contact adult-media sites and an optional more-like-this webhook. Docker publishes loopback by default and bind-mounts a host data directory (README.md:20-24, README.md:38-45, docker-compose.yml:6-30, app/api.py:91-159, app/server.py:58-89).\n\n## Assets\n\n- Integrity and privacy of votes, reasons, notes, highlights, skips, more-like-this requests, source metadata, scoreboard data, and download settings stored beneath DATA_DIR/SHARED_DIR/MEDIA_DIR/CACHE_DIR (app/config.py:64-70, app/store.py:12-25, app/store.py:238-268).\n- Authenticated Pornhub session material referenced by PH_COOKIES_FILE and the upstream account authority it grants; the server may use it for one-tap favorites (app/config.py:94-101, app/clips.py:75-118).\n- The optional MLT_WEBHOOK_KEY and webhook destination used to notify a separate digger service (app/config.py:81-89, app/store.py:499-513).\n- Host filesystem confinement for downloaded media under DOWNLOAD_ROOT and integrity of files mounted into the container data volume (app/config.py:103-109, app/store.py:277-309, docker-compose.yml:10-14).\n- Server and host availability while handling blocking upstream fetches, yt-dlp/ffmpeg work, media streaming, source scans, and concurrent HTTP requests (app/api.py:145-151, app/clips.py:577-630, app/clips.py:1184-1269).\n\n## Trust Boundaries\n\n- Browser or API client to FastAPI: every HTTP request is accepted only from ALLOWED_NETS and allowed Host names/ports; GET/HEAD under /api and /media receive cross-site checks, while JSON POSTs require same-origin fetch metadata or Origin and a bounded Content-Length. There is deliberately no login, so all clients admitted by this network boundary share application authority (README.md:169-174, app/api.py:91-136, app/api.py:543-566, app/guards.py:24-69).\n- FastAPI mutation routes to local file-backed state: known clip identifiers and operation-specific validation precede atomic JSON writes; download directory settings are resolved with realpath beneath DOWNLOAD_ROOT (app/api.py:573-716, app/store.py:103-113, app/store.py:249-309).\n- Configured source files and scout/digger outputs to the in-memory index and browser: app/index.py recursively scans SOURCES_DIR and reads JSON/HTML-derived metadata that later appears in JSON responses and DOM rendering; these files are trusted deployment inputs but remain a stored-content parsing boundary (app/config.py:64-70, app/index.py:3-149, app/api.py:249-378).\n- Server to external media sites and CDNs: validated clip IDs select fixed site URL templates and media helpers invoke urllib, yt-dlp, and ffmpeg; the image proxy uses a hostname regex and phnet.py routes only configured adult-site suffixes through an optional proxy (app/sites.py:14-54, app/clips.py:326-430, app/clips.py:527-630, app/phnet.py:12-103).\n- Server to privileged upstream capabilities: the favorite endpoint consumes a configured cookie file to mutate a Pornhub account, and the more-like-this flow may send a configured bearer-style key to a configured webhook. Any admitted browser client can request these operations because authorization is network-wide, not per user (app/api.py:610-641, app/clips.py:75-135, app/store.py:499-544).\n- Deployment/operator boundary: Docker runs the application as a non-root user with /data mounted and publishes only 127.0.0.1 by default; scripts/ensure-up.sh is a separate operator-invoked recovery path that can manage Tailscale with passwordless sudo and is not reachable through HTTP routes (Dockerfile:28-40, docker-compose.yml:25-36, scripts/ensure-up.sh:68-176).\n\n## Attacker Capabilities\n\n- A network client inside an allowed CIDR who can send arbitrary HTTP paths, headers, JSON bodies up to the configured body limit, range requests, and repeated requests, but who does not initially control the server process, environment, local files, configured credentials, or operator account.\n- A malicious website visited by an admitted user's browser that can attempt cross-site GETs or POSTs but cannot normally forge same-origin Origin, Sec-Fetch-Site, Host, or the client's source network; read_problem and write_problem are the expected controls (app/guards.py:43-69).\n- A contributor or local automation process able to write configured SOURCES_DIR or shared scout/digger JSON can influence clip metadata and index inputs, but source access alone does not establish control of the HTTP host, credentials, or deployment environment.\n- An operator who controls environment variables, .env, volume mappings, download roots, proxy destinations, or recovery scripts is already trusted with deployment authority; review seeks unintended privilege gain across these controls rather than treating authorized configuration as an attacker primitive.\n\n## Security Objectives\n\n- Only intended loopback, tailnet, LAN, or authenticated-reverse-proxy clients may read adult-content metadata or invoke state-changing, credentialed, download, and media-generation operations.\n- Cross-site browser requests must not use an admitted user's network position to read private API/media responses or perform writes.\n- Untrusted request fields and source metadata must not escape configured filesystem roots, become shell or subprocess code, create unsafe outbound destinations, or execute in the browser as active markup/script.\n- Authenticated Pornhub cookies and webhook keys must remain server-side, avoid responses and logs, and be used only for their intended fixed upstream operations.\n- Request, parsing, streaming, transcode, and background-job work must be bounded enough that an admitted client or malformed source file cannot trivially exhaust shared service resources.\n- Atomic updates and concurrency controls must preserve file-backed data integrity across votes, highlights, downloads, skips, and more-like-this workflows.\n\n## Assumptions\n\n- The documented deployment is single-user/self-hosted and has no application login; the intended perimeter is loopback, Tailscale, an explicitly allowed network, or an authenticating reverse proxy (README.md:42-45, README.md:169-174).\n- Uvicorn disables proxy-header trust, so direct client addresses—not untrusted X-Forwarded-For values—feed the network allowlist (app/api.py:735-737).\n- Docker's default host publication is 127.0.0.1, although operators may deliberately set PUBLISH_ADDR=0.0.0.0 and broaden ALLOWED_NETS/ALLOWED_HOSTS (docker-compose.yml:18-30).\n- The root policy resolver returned no SECURITY.md guidance; there is no supplied knowledge base or authoritative user threat model.\n- It is not yet established whether all source metadata is operator-controlled or may be produced from less-trusted automated inputs, whether the optional reverse proxy rewrites schemes, or whether webhook/cookie features are enabled in a real deployment.\n- The independent architecture review has returned and is awaiting parent verification and reconciliation.\n\n---\n\n## Saved Model Context\n\n- Source: scan\n- Scan: bdee8bf1-1977-4dd3-af3a-ea2d503003ca\n- Target: gwagonridah-blip--ph-vote\n- Revision: a07500c4d8b2519817c8736818be1db971121961\n- Result status: draft\n- Model origin: generated\n- Model scope: .\n- Model scope description: Entire repository.\n- Scan scope: .\n- Scan scope description: Standard static security scan of the entire repository at the SDK-registered git revision.\n\nThis is a provisional model saved before successful completion.\n\n---\n\n## Saved Model Context\n\n- Source: scan\n- Scan: bdee8bf1-1977-4dd3-af3a-ea2d503003ca\n- Target: gwagonridah-blip--ph-vote\n- Revision: a07500c4d8b2519817c8736818be1db971121961\n- Result status: draft\n- Model origin: reconciled\n- Model scope: not recorded\n- Scan scope: .\n- Scan scope description: Standard static security scan of the entire repository at the SDK-registered git revision.\n\nThis is a provisional model saved before successful completion.\n\n---\n\n## Saved Model Context\n\n- Source: scan\n- Scan: bdee8bf1-1977-4dd3-af3a-ea2d503003ca\n- Target: gwagonridah-blip--ph-vote\n- Revision: a07500c4d8b2519817c8736818be1db971121961\n- Result status: draft\n- Model origin: reconciled\n- Model scope: not recorded\n- Scan scope: .\n- Scan scope description: Standard static security scan of the entire repository at the SDK-registered git revision.\n\nThis is a provisional model saved before successful completion.\n\n---\n\n## Saved Model Context\n\n- Source: scan\n- Scan: bdee8bf1-1977-4dd3-af3a-ea2d503003ca\n- Target: gwagonridah-blip--ph-vote\n- Revision: a07500c4d8b2519817c8736818be1db971121961\n- Result status: draft\n- Model origin: reconciled\n- Model scope: not recorded\n- Scan scope: .\n- Scan scope description: Standard static security scan of the entire repository at the SDK-registered git revision.\n\nThis is a provisional model saved before successful completion.\n\n---\n\n## Saved Model Context\n\n- Source: scan\n- Scan: bdee8bf1-1977-4dd3-af3a-ea2d503003ca\n- Target: gwagonridah-blip--ph-vote\n- Revision: a07500c4d8b2519817c8736818be1db971121961\n- Result status: draft\n- Model origin: reconciled\n- Model scope: not recorded\n- Scan scope: .\n- Scan scope description: Standard static security scan of the entire repository at the SDK-registered git revision.\n\nThis is a provisional model saved before successful completion.\n\n---\n\n## Saved Model Context\n\n- Source: scan\n- Scan: bdee8bf1-1977-4dd3-af3a-ea2d503003ca\n- Target: gwagonridah-blip--ph-vote\n- Revision: a07500c4d8b2519817c8736818be1db971121961\n- Result status: draft\n- Model origin: reconciled\n- Model scope: not recorded\n- Scan scope: .\n- Scan scope description: Standard static security scan of the entire repository at the SDK-registered git revision.\n\nThis is a provisional model saved before successful completion.\n\n---\n\n## Saved Model Context\n\n- Source: scan\n- Scan: bdee8bf1-1977-4dd3-af3a-ea2d503003ca\n- Target: gwagonridah-blip--ph-vote\n- Revision: a07500c4d8b2519817c8736818be1db971121961\n- Result status: draft\n- Model origin: reconciled\n- Model scope: not recorded\n- Scan scope: .\n- Scan scope description: Standard static security scan of the entire repository at the SDK-registered git revision.\n\nThis is a provisional model saved before successful completion.\n\n---\n\n## Saved Model Context\n\n- Source: scan\n- Scan: bdee8bf1-1977-4dd3-af3a-ea2d503003ca\n- Target: gwagonridah-blip--ph-vote\n- Revision: a07500c4d8b2519817c8736818be1db971121961\n- Result status: draft\n- Model origin: reconciled\n- Model scope: not recorded\n- Scan scope: .\n- Scan scope description: Standard static security scan of the entire repository at the SDK-registered git revision.\n\nThis is a provisional model saved before successful completion.\n\n---\n\n## Saved Model Context\n\n- Source: scan\n- Scan: bdee8bf1-1977-4dd3-af3a-ea2d503003ca\n- Target: gwagonridah-blip--ph-vote\n- Revision: a07500c4d8b2519817c8736818be1db971121961\n- Result status: draft\n- Model origin: reconciled\n- Model scope: not recorded\n- Scan scope: .\n- Scan scope description: Standard static security scan of the entire repository at the SDK-registered git revision.\n\nThis is a provisional model saved before successful completion.\n\n---\n\n## Saved Model Context\n\n- Source: scan\n- Scan: bdee8bf1-1977-4dd3-af3a-ea2d503003ca\n- Target: gwagonridah-blip--ph-vote\n- Revision: a07500c4d8b2519817c8736818be1db971121961\n- Result status: draft\n- Model origin: reconciled\n- Model scope: not recorded\n- Scan scope: .\n- Scan scope description: Standard static security scan of the entire repository at the SDK-registered git revision.\n\nThis is a provisional model saved before successful completion.\n\n---\n\n## Saved Model Context\n\n- Source: scan\n- Scan: bdee8bf1-1977-4dd3-af3a-ea2d503003ca\n- Target: gwagonridah-blip--ph-vote\n- Revision: a07500c4d8b2519817c8736818be1db971121961\n- Result status: draft\n- Model origin: reconciled\n- Model scope: not recorded\n- Scan scope: .\n- Scan scope description: Standard static security scan of the entire repository at the SDK-registered git revision.\n\nThis is a provisional model saved before successful completion.\n\n---\n\n## Saved Model Context\n\n- Source: scan\n- Scan: bdee8bf1-1977-4dd3-af3a-ea2d503003ca\n- Target: gwagonridah-blip--ph-vote\n- Revision: a07500c4d8b2519817c8736818be1db971121961\n- Result status: draft\n- Model origin: reconciled\n- Model scope: not recorded\n- Scan scope: .\n- Scan scope description: Standard static security scan of the entire repository at the SDK-registered git revision.\n\nThis is a provisional model saved before successful completion.\n",
+    "origin": "reconciled"
+  },
+  "findings": [
+    {
+      "ruleId": "stored-xss.vote-restore-note-time",
+      "identity": {
+        "anchor": "stored-xss/vote-restore-note-time",
+        "instance": "api-vote-restore-to-myvotes"
+      },
+      "title": "Vote restore persists an unvalidated note timestamp into an HTML attribute",
+      "summary": "An admitted HTTP client can submit a crafted historical vote entry through the undo/restore branch. Unlike normal vote writes, restore_vote does not apply clean_notes, so an attacker-controlled note timestamp is stored and later interpolated without escaping into a data-t attribute in the My votes list. Rendering that list can execute injected markup in another admitted browser.",
+      "severity": {
+        "level": "medium",
+        "score": 6.1,
+        "scoringSystem": "CVSS 3.1 (context-calibrated)",
+        "vector": "CVSS:3.1/AV:A/AC:L/PR:L/UI:R/S:U/C:H/I:H/A:L",
+        "rationale": "The attacker must already be inside an allowed network and a victim must open My votes, but the primitive crosses from ordinary shared-state mutation into persistent script execution in another browser's private application origin.",
+        "changeConditions": "Raise if the service is shared with mutually untrusted network clients or the origin gains additional browser-held credentials; lower if the deployment is provably single-user."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "The client-controlled nested notes value is persisted without clean_notes and reaches a quoted attribute in markup assigned through innerHTML; the ordinary write path demonstrates the missing intended validator."
+      },
+      "taxonomy": {
+        "category": "Stored browser injection caused by inconsistent nested restore validation",
+        "cwe": [
+          "CWE-79"
+        ]
+      },
+      "locations": [
+        {
+          "path": "app/api.py",
+          "startLine": 701,
+          "endLine": 704,
+          "role": "source"
+        },
+        {
+          "path": "app/store.py",
+          "startLine": 180,
+          "endLine": 202,
+          "role": "root_control"
+        },
+        {
+          "path": "app/store.py",
+          "startLine": 128,
+          "endLine": 131,
+          "role": "propagation"
+        },
+        {
+          "path": "app/index.py",
+          "startLine": 828,
+          "endLine": 835,
+          "role": "propagation"
+        },
+        {
+          "path": "web/index.html",
+          "startLine": 2850,
+          "endLine": 2862,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "restore-bypasses-clean-notes",
+          "label": "Restore forwards the supplied entry unchanged",
+          "path": "app/api.py",
+          "startLine": 701,
+          "endLine": 704,
+          "language": "python",
+          "role": "source",
+          "code": "if level == 'restore':\n    at = b.get('at')\n    n = core.restore_vote(vk, b.get('entry'), at if isinstance(at, int) and not isinstance(at, bool) else None)",
+          "explanation": "The restore operation accepts the nested entry object directly and does not call clean_notes."
+        },
+        {
+          "id": "restore-validates-only-outer-shape",
+          "label": "Nested notes are not normalized before persistence",
+          "path": "app/store.py",
+          "startLine": 180,
+          "endLine": 202,
+          "language": "python",
+          "role": "root_control",
+          "code": "PAGE_KEYS = {'viewkey', 'vote', 'strength', 'reason', 'notes', 'date', 'source', 'title', 'uploader', 'lane'}\n\ndef restore_vote(vk, entry, at=None):\n    if entry is not None:\n        if not (isinstance(entry, dict) and entry.get('source') == 'vote-page' and entry.get('viewkey') == vk\n                and entry.get('vote') in ('up', 'down') and set(entry) <= PAGE_KEYS):\n            raise ValueError('bad restore entry')\n    ...\n    votes[pos[0]] = entry\n    ...\n    write_votes(votes)",
+          "explanation": "notes is an allowed key, but its member types and timestamp are never checked before entry is written to votes.json."
+        },
+        {
+          "id": "normal-path-validates-note-time",
+          "label": "The intended validator requires a bounded numeric timestamp",
+          "path": "app/store.py",
+          "startLine": 140,
+          "endLine": 151,
+          "language": "python",
+          "role": "control",
+          "code": "def clean_notes(notes):\n    ...\n    t = n.get('t'); text = str(n.get('text') or '').strip()[:200]; mode = n.get('mode')\n    if isinstance(t, bool) or not isinstance(t, (int, float)) or not (0 <= t <= 86400): raise ValueError('bad note time')\n    ...\n    out.append({'t': int(round(t)), 'text': text, 'mode': mode})",
+          "explanation": "Normal vote and reason writes call this function; the restore branch is the inconsistent bypass."
+        },
+        {
+          "id": "note-time-attribute-sink",
+          "label": "Stored timestamp is interpolated unescaped into innerHTML",
+          "path": "web/index.html",
+          "startLine": 2850,
+          "endLine": 2860,
+          "language": "html",
+          "role": "sink",
+          "code": "function rowHTML(it, i){\n  const v = it.vote, lv = v ? v.level : 'none', r = splitReason(v && v.reason, v && v.notes);\n  ...\n  <div class=\"rnotes\">${(v && v.notes || []).map((n, k) => `<span class=\"nchip\" data-act=\"seek\" data-t=\"${n.t}\" data-k=\"${k}\" role=\"button\" tabindex=\"0\" title=\"open the full video at ${fmtT(n.t)}\">...</span>`).join('')}</div>",
+          "explanation": "A quote in n.t terminates data-t and can insert an event-bearing element when rowHTML is assigned to #rows.innerHTML."
+        }
+      ],
+      "rootCause": {
+        "summary": "The undo API treats a client-supplied historical object as trusted server state. Its allowlist validates only top-level keys and a few scalar fields, omitting the nested notes schema enforced by normal writes.",
+        "evidenceRefs": [
+          "restore-bypasses-clean-notes",
+          "restore-validates-only-outer-shape",
+          "normal-path-validates-note-time"
+        ]
+      },
+      "remediation": "Do not accept a client-supplied vote entry as an undo token. Retain previous state server-side or issue an opaque, integrity-protected reference. If restore remains, reconstruct the entry from explicitly validated fields and run notes through clean_notes before persistence. In the browser, require finite numeric timestamps and create note elements with DOM APIs/textContent/dataset instead of HTML strings. A restrictive script-src CSP adds defense in depth after inline handlers are removed or nonced.",
+      "validation": {
+        "assertions": [
+          "An admitted client controls entry.notes[].t in the restore request.",
+          "restore_vote persists that value without clean_notes.",
+          "The My votes response returns stored notes.",
+          "rowHTML inserts n.t into a quoted attribute and the resulting string is assigned with innerHTML."
+        ],
+        "counterEvidence": [
+          "Host, allowed-network, same-origin-style JSON, and known-viewkey guards restrict the source request.",
+          "Exploitation requires another browser to render My votes.",
+          "Ordinary vote and reason writes do validate notes."
+        ],
+        "evidenceRefs": [
+          "restore-bypasses-clean-notes",
+          "restore-validates-only-outer-shape",
+          "note-time-attribute-sink"
+        ],
+        "limitations": [
+          "The application is documented as single-user by default; multi-client deployment determines how often the cross-browser impact is meaningful."
+        ],
+        "method": "Independent static source-to-sink validation",
+        "status": "validated",
+        "summary": "Confirmed inconsistent restore validation and a persistent unescaped attribute sink.",
+        "disposition": "report"
+      },
+      "attackPath": {
+        "controls": [
+          "Network, Host, request-content, Origin/Fetch-Metadata, and known-viewkey checks remain effective but do not validate the restore object's nested notes.",
+          "The response CSP only sets frame-ancestors and does not block inline event handlers."
+        ],
+        "impact": {
+          "level": "medium",
+          "rationale": "Application-origin script can read private UI/API data, alter shared state, and access device-local origin storage."
+        },
+        "likelihood": {
+          "level": "medium",
+          "rationale": "The request is simple for an admitted peer, but deployment is primarily single-user and a victim interaction is required."
+        },
+        "preconditions": [
+          "Attacker can directly reach the application from ALLOWED_NETS and satisfy its JSON/Origin or Fetch Metadata guard.",
+          "The target viewkey is known to the application.",
+          "A victim later renders My votes."
+        ],
+        "reachability": {
+          "summary": "Source-to-sink path is fully reachable within the documented multi-client network model.",
+          "attacker": "Admitted network client",
+          "entrypoint": "POST /api/vote with level=restore",
+          "source": "entry.notes[].t",
+          "sink": "web/index.html rowHTML data-t interpolation parsed by innerHTML",
+          "outcome": "Persistent script execution in a victim's application origin",
+          "preconditions": [
+            "Victim opens My votes."
+          ],
+          "evidenceRefs": [
+            "restore-bypasses-clean-notes",
+            "restore-validates-only-outer-shape",
+            "note-time-attribute-sink"
+          ]
+        },
+        "steps": [
+          "Send POST /api/vote for a known viewkey with level=restore and entry.notes containing a string timestamp that closes data-t and adds active markup.",
+          "restore_vote accepts and writes the entry to votes.json.",
+          "A victim opens the My votes view, causing queue('myvotes') to return the stored notes.",
+          "rowHTML builds a string containing the attacker timestamp, and #rows.innerHTML parses the injected element."
+        ],
+        "summary": "An admitted peer stores a crafted undo entry; a later My votes render executes its attribute-breaking timestamp."
+      },
+      "remediationTests": [
+        "POST a restore entry whose notes timestamp is a string containing a quote and active markup; expect HTTP 400 and confirm votes.json is unchanged.",
+        "Restore a valid historical entry and confirm notes are normalized exactly as in ordinary vote writes.",
+        "Render a stored malformed legacy note and assert no element or event-handler injection occurs.",
+        "Add an end-to-end two-client test: attacker submits the restore payload, victim opens My votes, and no script-visible sentinel changes."
+      ],
+      "preventiveControls": [
+        "Use one server-side schema validator for new votes, reason edits, and restores.",
+        "Represent undo state by server-generated opaque identifiers rather than round-tripping trusted objects through the browser.",
+        "Build dynamic DOM with node APIs and enforce a script-src CSP."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "cand-vote-restore-stored-xss",
+        "originalCandidates": [
+          {
+            "title": "Vote restore accepts unvalidated note timestamps that become stored HTML injection",
+            "rule": "Restore inputs must satisfy the same nested validation as ordinary vote writes",
+            "cwe": "CWE-79",
+            "severity": "medium",
+            "confidence": "high",
+            "attacker": "An HTTP client admitted by ALLOWED_NETS that can send same-origin-style JSON POSTs.",
+            "source_to_sink": "The restore branch forwards client-supplied entry to restore_vote without clean_notes; notes are persisted and later n.t is interpolated unescaped into data-t markup assigned through innerHTML.",
+            "concrete_impact": "A crafted timestamp can break out of the attribute and persistently execute script when another admitted browser renders My votes.",
+            "locations": [
+              {
+                "path": "app/api.py",
+                "lines": "701-704"
+              },
+              {
+                "path": "app/store.py",
+                "lines": "128-134, 176-197"
+              },
+              {
+                "path": "app/index.py",
+                "lines": "826-835"
+              },
+              {
+                "path": "web/index.html",
+                "lines": "2855-2864"
+              }
+            ],
+            "counterevidence": [
+              "Requires an admitted direct HTTP client; normal cross-site POSTs are blocked.",
+              "Victim must render My votes."
+            ],
+            "recommended_remediation": "Keep undo state server-side or fully reconstruct and validate restored entries with clean_notes; render note rows with DOM APIs/textContent and add restrictive CSP."
+          },
+          {
+            "attacker": "An HTTP client admitted by ALLOWED_NETS that can send same-origin-style JSON POSTs.",
+            "concrete_impact": "A crafted timestamp can break out of the attribute and persistently execute script when another admitted browser renders My votes.",
+            "confidence": "high",
+            "counterevidence": [
+              "Requires an admitted direct HTTP client; normal cross-site POSTs are blocked.",
+              "Victim must render My votes."
+            ],
+            "cwe": "CWE-79",
+            "locations": [
+              {
+                "lines": "701-704",
+                "path": "app/api.py"
+              },
+              {
+                "lines": "128-134, 176-197",
+                "path": "app/store.py"
+              },
+              {
+                "lines": "826-835",
+                "path": "app/index.py"
+              },
+              {
+                "lines": "2855-2864",
+                "path": "web/index.html"
+              }
+            ],
+            "recommended_remediation": "Keep undo state server-side or fully reconstruct and validate restored entries with clean_notes; render note rows with DOM APIs/textContent and add restrictive CSP.",
+            "rule": "Restore inputs must satisfy the same nested validation as ordinary vote writes",
+            "severity": "medium",
+            "source_to_sink": "The restore branch forwards client-supplied entry to restore_vote without clean_notes; notes are persisted and later n.t is interpolated unescaped into data-t markup assigned through innerHTML.",
+            "title": "Vote restore accepts unvalidated note timestamps that become stored HTML injection"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "prototype-pollution.watch-state-viewkey",
+      "identity": {
+        "anchor": "prototype-pollution/watch-state-viewkey",
+        "instance": "already-sent-to-browser-watch-map"
+      },
+      "title": "An unvalidated clip identifier pollutes Object.prototype in browser watch state",
+      "summary": "The index admits arbitrary string identifiers from already-sent.json, including __proto__, and returns them in queue items. When an invalid item reaches the normal media fallback, wpMark uses the identifier as a key in a plain object. WATCH['__proto__'] resolves Object.prototype, so the fixed watch-state fields are written to the global prototype and inherited by unrelated clip entries.",
+      "severity": {
+        "level": "low",
+        "score": 3.3,
+        "scoringSystem": "CVSS 3.1 (context-calibrated)",
+        "vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:N/I:L/A:L",
+        "rationale": "The source writer must already control a local shared input and the resulting pollution is limited to fixed client-side watch fields for the lifetime of the page. It can corrupt UI state and destabilize property checks but does not provide arbitrary script execution or server-side state corruption.",
+        "changeConditions": "Raise if future wpMark call sites permit attacker-selected property names or polluted fields become security decisions; lower to informational if all source writers are fully trusted operators."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "The special __proto__ lookup semantics, unvalidated source identifier, reachable fallback call, and fixed prototype writes are all explicit in source."
+      },
+      "taxonomy": {
+        "category": "Client-side prototype pollution through an unvalidated object key",
+        "cwe": [
+          "CWE-1321"
+        ]
+      },
+      "locations": [
+        {
+          "path": "app/index.py",
+          "startLine": 3,
+          "endLine": 7,
+          "role": "root_control"
+        },
+        {
+          "path": "app/index.py",
+          "startLine": 804,
+          "endLine": 820,
+          "role": "propagation"
+        },
+        {
+          "path": "web/index.html",
+          "startLine": 1738,
+          "endLine": 1756,
+          "role": "propagation"
+        },
+        {
+          "path": "web/index.html",
+          "startLine": 1849,
+          "endLine": 1857,
+          "role": "source"
+        },
+        {
+          "path": "web/index.html",
+          "startLine": 3050,
+          "endLine": 3067,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "unvalidated-index-key",
+          "label": "already-sent accepts every string as a clip key",
+          "path": "app/index.py",
+          "startLine": 3,
+          "endLine": 7,
+          "language": "python",
+          "role": "root_control",
+          "code": "def build_index():\n    sent = load_json(SENT, []) or []\n    sent = [k for k in sent if isinstance(k, str)]\n    S = set(sent)\n    meta = {k: {} for k in sent}",
+          "explanation": "The canonical VK_RE exists but is not applied here, so __proto__ can become an indexed viewkey."
+        },
+        {
+          "id": "invalid-key-reaches-backlog",
+          "label": "Indexed picks are emitted without a validity filter",
+          "path": "app/index.py",
+          "startLine": 804,
+          "endLine": 820,
+          "language": "python",
+          "role": "propagation",
+          "code": "backlog_all = [p for p in INDEX['picks'] if p['viewkey'] not in tset and not voted(p['viewkey'])]\n...\nif mode == 'backlog':\n    items = [card_of(p['viewkey'], None, cv, ms) for p in backlog_all]",
+          "explanation": "An invalid string identifier can reach the browser queue even though mutation APIs later reject it."
+        },
+        {
+          "id": "embed-marks-source-key",
+          "label": "Media fallback records the source-derived identifier",
+          "path": "web/index.html",
+          "startLine": 1849,
+          "endLine": 1856,
+          "language": "html",
+          "role": "source",
+          "code": "function startEmbed(c, why){\n  if (!navigator.onLine) return waitOnline(c);\n  const it = c.item, m = mediaEl(c);\n  clearMedia(c); c.media = 'embed'; wpMark(it.viewkey, 'e');\n  const f = document.createElement('iframe');\n  ...\n  f.src = embedUrlOf(it);",
+          "explanation": "Invalid IDs cause preview/full API errors and ultimately reach this fallback, which passes viewkey to wpMark."
+        },
+        {
+          "id": "plain-object-prototype-write",
+          "label": "Plain object indexing reuses Object.prototype",
+          "path": "web/index.html",
+          "startLine": 3050,
+          "endLine": 3067,
+          "language": "html",
+          "role": "sink",
+          "code": "const WATCH = LS.get('watch', {}) || {};\n...\nfunction wpMark(vk, k, v){\n  if (!vk) return; const w = WATCH[vk] || (WATCH[vk] = {});\n  if (k === 'f'){ ... } else { if (w[k]) return; w[k] = 1; }\n  w.t = Date.now();\n}\n...\nfunction wpBadge(vk){\n  const w = WATCH[vk]; if (!w) return '';\n  ...\n  if (w.e) return '<span class=\"wp\" ...>↗ opened</span>';",
+          "explanation": "For vk='__proto__', w is Object.prototype; writes to w.e and w.t pollute every ordinary object and make unrelated absent watch records inherit the opened flag."
+        }
+      ],
+      "rootCause": {
+        "summary": "Server-side ingestion does not enforce its canonical clip identifier grammar, and client-side per-key state uses a prototype-bearing object without own-property checks.",
+        "evidenceRefs": [
+          "unvalidated-index-key",
+          "invalid-key-reaches-backlog",
+          "plain-object-prototype-write"
+        ]
+      },
+      "remediation": "Validate every clip identifier with VK_RE while ingesting already-sent and sent-log data, dropping and logging invalid values before index construction. Independently represent WATCH with Map or Object.create(null), validate the parsed localStorage object, and use Object.hasOwn before reusing a keyed record.",
+      "validation": {
+        "assertions": [
+          "already-sent strings are not filtered by VK_RE.",
+          "Backlog queue returns every indexed pick.",
+          "Invalid identifiers fail preview/full requests and the online fallback calls startEmbed.",
+          "WATCH is a normal object and WATCH['__proto__'] resolves Object.prototype.",
+          "wpMark writes fixed e and t properties to the returned object."
+        ],
+        "counterEvidence": [
+          "Server write APIs require VK_RE and known_vk, preventing vote-state corruption with this identifier.",
+          "Only fixed watch fields can be written.",
+          "The pollution is in-memory; JSON.stringify does not persist inherited fields."
+        ],
+        "evidenceRefs": [
+          "unvalidated-index-key",
+          "embed-marks-source-key",
+          "plain-object-prototype-write"
+        ],
+        "limitations": [
+          "The impact of inherited e/t fields outside the watch UI depends on other browser code's property checks."
+        ],
+        "method": "Independent static data-flow validation",
+        "status": "validated",
+        "summary": "Confirmed the __proto__ key reaches a fixed Object.prototype write in the normal invalid-media fallback.",
+        "disposition": "report"
+      },
+      "attackPath": {
+        "controls": [
+          "HTTP mutation routes reject the invalid ID, limiting impact to client rendering/state.",
+          "The existing watched_test.js covers ordinary keys but not special object keys."
+        ],
+        "impact": {
+          "level": "low",
+          "rationale": "Corrupts client-side watch state and may perturb property checks, without proven code execution or server-side mutation."
+        },
+        "likelihood": {
+          "level": "medium",
+          "rationale": "The trigger is deterministic once a writable source contains the special key, but that writer is a local integration boundary."
+        },
+        "preconditions": [
+          "Attacker can write the authoritative clip list or influence its producer.",
+          "An admitted user displays the poisoned card while online."
+        ],
+        "reachability": {
+          "summary": "Reachable through the documented file-backed source ingestion and backlog UI.",
+          "attacker": "Shared clip-list writer",
+          "entrypoint": "shared/already-sent.json",
+          "source": "viewkey string __proto__",
+          "sink": "WATCH[vk] and writes in wpMark",
+          "outcome": "Object.prototype receives e and t properties in the application page",
+          "preconditions": [
+            "Poisoned card is displayed."
+          ],
+          "evidenceRefs": [
+            "unvalidated-index-key",
+            "invalid-key-reaches-backlog",
+            "plain-object-prototype-write"
+          ]
+        },
+        "steps": [
+          "Write __proto__ as a string entry in already-sent.json.",
+          "The server builds and returns it as a backlog queue card.",
+          "The page tries preview/full routes, which reject the invalid ID, then falls back to startEmbed.",
+          "wpMark('__proto__','e') resolves Object.prototype and writes e and t.",
+          "Unrelated object-backed watch lookups inherit the polluted flag until reload."
+        ],
+        "summary": "A shared-data writer introduces __proto__ as a clip, and a browser displaying it writes watch flags onto Object.prototype."
+      },
+      "remediationTests": [
+        "Add __proto__, constructor, and prototype entries to an ingestion fixture; assert none appear in /api/queue.",
+        "Call wpMark('__proto__','e') in watched_test.js and assert Object.prototype has no new e or t property.",
+        "Verify an unrelated identifier receives no inherited badge after malicious-key input.",
+        "Exercise valid bare, xh:, and ep: identifiers to prevent an over-restrictive fix."
+      ],
+      "preventiveControls": [
+        "Centralize canonical identifier validation at every file-ingestion boundary.",
+        "Use Map or prototype-free dictionaries for attacker-influenced keys.",
+        "Include JavaScript special-property keys in keyed-state regression tests."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "cand-watched-prototype-pollution",
+        "originalCandidates": [
+          {
+            "title": "Unvalidated clip identifier can pollute the browser Object prototype through watch-state tracking",
+            "rule": "Validate source identifiers and use prototype-free keyed state",
+            "cwe": "CWE-1321",
+            "severity": "low",
+            "confidence": "high",
+            "attacker": "A writer able to place arbitrary string identifiers in shared already-sent or sent-log source data.",
+            "source_to_sink": "build_index accepts every string from already-sent.json and returns it in queue items; media fallback calls wpMark(viewkey,'e'); WATCH is a normal object and WATCH['__proto__'] resolves Object.prototype, so wpMark writes fixed e/t fields onto Object.prototype.",
+            "concrete_impact": "Unrelated clips inherit false watched-state flags and other browser property checks may be perturbed until reload; no script execution or server-side corruption was established.",
+            "locations": [
+              {
+                "path": "app/index.py",
+                "lines": "3-7, 804-820"
+              },
+              {
+                "path": "web/index.html",
+                "lines": "1522-1528, 1738-1757, 1795-1815, 1849-1853, 3052-3067"
+              },
+              {
+                "path": "tests/watched_test.js",
+                "lines": "6-30"
+              }
+            ],
+            "counterevidence": [
+              "Write APIs reject invalid identifiers.",
+              "Only fixed fields e,p,f,t can be written.",
+              "Pollution is in-memory and not serialized as an own WATCH property."
+            ],
+            "recommended_remediation": "Reject invalid identifiers during ingestion and use Map or Object.create(null) for WATCH; add __proto__ isolation tests."
+          },
+          {
+            "attacker": "A writer able to place arbitrary string identifiers in shared already-sent or sent-log source data.",
+            "concrete_impact": "Unrelated clips inherit false watched-state flags and other browser property checks may be perturbed until reload; no script execution or server-side corruption was established.",
+            "confidence": "high",
+            "counterevidence": [
+              "Write APIs reject invalid identifiers.",
+              "Only fixed fields e,p,f,t can be written.",
+              "Pollution is in-memory and not serialized as an own WATCH property."
+            ],
+            "cwe": "CWE-1321",
+            "locations": [
+              {
+                "lines": "3-7, 804-820",
+                "path": "app/index.py"
+              },
+              {
+                "lines": "1522-1528, 1738-1757, 1795-1815, 1849-1853, 3052-3067",
+                "path": "web/index.html"
+              },
+              {
+                "lines": "6-30",
+                "path": "tests/watched_test.js"
+              }
+            ],
+            "recommended_remediation": "Reject invalid identifiers during ingestion and use Map or Object.create(null) for WATCH; add __proto__ isolation tests.",
+            "rule": "Validate source identifiers and use prototype-free keyed state",
+            "severity": "low",
+            "source_to_sink": "build_index accepts every string from already-sent.json and returns it in queue items; media fallback calls wpMark(viewkey,'e'); WATCH is a normal object and WATCH['__proto__'] resolves Object.prototype, so wpMark writes fixed e/t fields onto Object.prototype.",
+            "title": "Unvalidated clip identifier can pollute the browser Object prototype through watch-state tracking"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "unsafe-browser-test.unsandboxed-external-embed",
+      "identity": {
+        "anchor": "unsafe-browser-test/unsandboxed-external-embed",
+        "instance": "parity-ui-queue-smoke"
+      },
+      "title": "The UI smoke test renders live third-party content with Chromium's sandbox disabled",
+      "summary": "tests/parity/ui_queue_smoke.py deliberately drives an unfetchable clip into a live Pornhub embed while launching Chromium with both --no-sandbox and --no-proxy-server. This contradicts the harness's offline isolation claim and exposes the developer or CI account to live third-party browser content without Chromium's normal process sandbox.",
+      "severity": {
+        "level": "medium",
+        "score": 5.3,
+        "scoringSystem": "CVSS 3.1 (context-calibrated)",
+        "vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:H/A:H",
+        "rationale": "A successful renderer compromise would inherit the test user's host privileges and can affect the workspace or readable credentials, but exploitation requires a browser vulnerability or equivalent compromise in a third-party delivery chain and the smoke test to run.",
+        "changeConditions": "Raise if the test runs automatically on privileged CI hosts with secrets or writable sensitive mounts; lower if it is always confined to an unprivileged, network-isolated container."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "The test explicitly waits for Pornhub embed URLs, disables the proxy, disables the browser sandbox, and contains a deterministic fixture that reaches that path."
+      },
+      "taxonomy": {
+        "category": "Developer-tool isolation failure for untrusted browser content",
+        "cwe": [
+          "CWE-693"
+        ]
+      },
+      "locations": [
+        {
+          "path": "tests/parity/README.md",
+          "startLine": 3,
+          "endLine": 10,
+          "role": "security_expectation"
+        },
+        {
+          "path": "tests/parity/ui_queue_smoke.py",
+          "startLine": 48,
+          "endLine": 49,
+          "role": "external_sink"
+        },
+        {
+          "path": "tests/parity/ui_queue_smoke.py",
+          "startLine": 62,
+          "endLine": 67,
+          "role": "external_sink"
+        },
+        {
+          "path": "tests/parity/ui_queue_smoke.py",
+          "startLine": 92,
+          "endLine": 104,
+          "role": "root_control"
+        },
+        {
+          "path": "tests/parity/fake_ytdlp/yt_dlp/__main__.py",
+          "startLine": 5,
+          "endLine": 8,
+          "role": "trigger"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "offline-harness-claim",
+          "label": "The harness claims no network use",
+          "path": "tests/parity/README.md",
+          "startLine": 3,
+          "endLine": 10,
+          "language": "markdown",
+          "role": "security_expectation",
+          "code": "Proves that the FastAPI app (`app/api.py`) keeps stable behaviour across changes. Everything runs against\n**temp data** on spare ports and never touches the live data or the network:\n...\n- ... `fake_ytdlp/` on `PYTHONPATH` stands in for yt-dlp ...; everything else goes to a dead proxy",
+          "explanation": "The documented safety property is local, temporary, and offline execution."
+        },
+        {
+          "id": "live-embed-wait",
+          "label": "The test waits for a real Pornhub iframe",
+          "path": "tests/parity/ui_queue_smoke.py",
+          "startLine": 62,
+          "endLine": 67,
+          "language": "python",
+          "role": "external_sink",
+          "code": "# a clip the server can't fetch (fake yt-dlp fails viewkeys ending in 04): straight to the site's embed in his browser\n...\nif i04 >= 0:\n    await ev(f\"jumpTo({i04}); true\")\n    await wait(ev, \"cur && cur.media === 'embed' && !!document.querySelector('#stage iframe[src^=\\\"https://www.pornhub.com/embed/\\\"]')\", 20)",
+          "explanation": "The asserted success condition is creation of a live third-party iframe, not a local stub."
+        },
+        {
+          "id": "deterministic-external-trigger",
+          "label": "The fixture guarantees the embed fallback",
+          "path": "tests/parity/ui_queue_smoke.py",
+          "startLine": 92,
+          "endLine": 100,
+          "language": "python",
+          "role": "trigger",
+          "code": "extra = [...]\nextra.append({'viewkey': 'zz15queue04', ...})   # fake yt-dlp fails it\n...\njson.dump(json.load(open(al)) + [x['viewkey'] for x in extra], open(al, 'w'))",
+          "explanation": "The special 04 identifier is always added to the local queue."
+        },
+        {
+          "id": "sandbox-and-proxy-disabled",
+          "label": "Chromium is launched unsandboxed with direct network access",
+          "path": "tests/parity/ui_queue_smoke.py",
+          "startLine": 101,
+          "endLine": 104,
+          "language": "python",
+          "role": "root_control",
+          "code": "prof = tempfile.mkdtemp(prefix='phqueue-chrome-')\nch = subprocess.Popen([CHROME, '--headless=new', '--no-sandbox', f'--remote-debugging-port={DBG}', f'--user-data-dir={prof}',\n                       '--no-proxy-server', 'about:blank'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)",
+          "explanation": "A temporary profile limits persistent browser state, but --no-sandbox removes the OS containment layer and --no-proxy-server bypasses the harness's dead proxy."
+        }
+      ],
+      "rootCause": {
+        "summary": "The smoke test relies on production's live external-embed fallback while disabling both the browser sandbox and proxy isolation, so its test fixture is not self-contained.",
+        "evidenceRefs": [
+          "offline-harness-claim",
+          "live-embed-wait",
+          "deterministic-external-trigger",
+          "sandbox-and-proxy-disabled"
+        ]
+      },
+      "remediation": "Remove --no-sandbox for developer-host execution. Block all non-loopback browser egress and replace the third-party embed with a local stub or CDP request interception. If the browser sandbox cannot run in the target environment, execute this test inside a dedicated unprivileged container or VM with no secrets, no sensitive writable mounts, and no Internet access.",
+      "validation": {
+        "assertions": [
+          "The 04 fixture is deterministic and fake yt-dlp rejects it.",
+          "The test waits until a https://www.pornhub.com/embed/ iframe exists.",
+          "--no-proxy-server permits direct browser egress.",
+          "--no-sandbox disables Chromium's process sandbox."
+        ],
+        "counterEvidence": [
+          "The browser uses a fresh temporary profile.",
+          "The test server and data are temporary.",
+          "Host compromise still requires a browser exploit or equivalent malicious external content."
+        ],
+        "evidenceRefs": [
+          "live-embed-wait",
+          "deterministic-external-trigger",
+          "sandbox-and-proxy-disabled"
+        ],
+        "limitations": [
+          "Whether this test runs in CI and what secrets or mounts are present is outside the repository."
+        ],
+        "method": "Independent static control-flow validation",
+        "status": "validated",
+        "summary": "Confirmed deterministic live iframe creation in a Chromium process launched without its sandbox.",
+        "disposition": "report"
+      },
+      "attackPath": {
+        "controls": [
+          "A temporary user-data directory reduces persistent browser-state exposure.",
+          "The test kills Chromium in finally, but only after content has executed."
+        ],
+        "impact": {
+          "level": "high",
+          "rationale": "A renderer compromise can access the developer/CI account's files and credentials."
+        },
+        "likelihood": {
+          "level": "low",
+          "rationale": "The test must run with egress and exploitation requires a browser vulnerability or supply-chain compromise."
+        },
+        "preconditions": [
+          "Chromium is installed and the host permits outbound network access.",
+          "The external content or delivery chain supplies a browser exploit."
+        ],
+        "reachability": {
+          "summary": "The external load is an asserted test path, and the browser launch flags remove the intended isolation.",
+          "attacker": "Compromised or malicious third-party embed/CDN content",
+          "entrypoint": "Live Pornhub iframe requested by the smoke test",
+          "source": "External browser content",
+          "sink": "Chromium renderer launched with --no-sandbox",
+          "outcome": "Potential code execution with the test account's host access",
+          "preconditions": [
+            "A compatible browser exploit is delivered."
+          ],
+          "evidenceRefs": [
+            "live-embed-wait",
+            "sandbox-and-proxy-disabled"
+          ]
+        },
+        "steps": [
+          "A developer or CI job runs ui_queue_smoke.py.",
+          "The fixture selects zz15queue04; fake yt-dlp returns an error.",
+          "The application falls back to a live Pornhub embed.",
+          "Chromium fetches and renders that external content because the proxy is disabled.",
+          "A renderer exploit, if delivered, executes without the normal Chromium process sandbox under the test account."
+        ],
+        "summary": "Running the advertised offline smoke test exposes an unsandboxed browser to live third-party iframe content."
+      },
+      "remediationTests": [
+        "Run the smoke test with outbound requests logged or intercepted and assert every destination is loopback.",
+        "Assert the launched Chromium command does not contain --no-sandbox on ordinary developer hosts.",
+        "Make the failed-media embed point at a local stub and preserve the existing fallback assertions.",
+        "In the isolated fallback environment, verify no credentials or host workspace mounts are present."
+      ],
+      "preventiveControls": [
+        "Treat browser tests as untrusted-content execution and require sandboxing or stronger outer isolation.",
+        "Make offline-test network policy fail closed instead of relying on application proxy settings.",
+        "Keep live third-party URLs out of deterministic regression fixtures."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "cand-parity-nosandbox-external",
+        "originalCandidates": [
+          {
+            "title": "UI smoke test loads third-party content with Chromium's process sandbox disabled",
+            "rule": "Offline browser tests must not render external content without a process sandbox",
+            "cwe": "CWE-693",
+            "severity": "medium",
+            "confidence": "high",
+            "attacker": "An attacker able to serve, compromise, or inject content into the external Pornhub embed or its CDN chain.",
+            "source_to_sink": "The fixture deliberately causes a media failure and waits for a live Pornhub embed; Chromium is launched with --no-sandbox and --no-proxy-server despite the harness claiming no network use.",
+            "concrete_impact": "A renderer exploit in third-party content would execute with the test user's OS privileges; the test also unexpectedly contacts a third party.",
+            "locations": [
+              {
+                "path": "tests/parity/ui_queue_smoke.py",
+                "lines": "48-49, 62-67, 96-104"
+              },
+              {
+                "path": "tests/parity/fake_ytdlp/yt_dlp/__main__.py",
+                "lines": "7-8"
+              },
+              {
+                "path": "tests/parity/README.md",
+                "lines": "3-10"
+              }
+            ],
+            "counterevidence": [
+              "Fresh temporary browser profile.",
+              "Host compromise still requires a browser vulnerability or equivalent external browser exploit."
+            ],
+            "recommended_remediation": "Remove --no-sandbox, block non-loopback egress, and use a local embed stub; otherwise isolate the test in a credential-free container/VM."
+          },
+          {
+            "attacker": "An attacker able to serve, compromise, or inject content into the external Pornhub embed or its CDN chain.",
+            "concrete_impact": "A renderer exploit in third-party content would execute with the test user's OS privileges; the test also unexpectedly contacts a third party.",
+            "confidence": "high",
+            "counterevidence": [
+              "Fresh temporary browser profile.",
+              "Host compromise still requires a browser vulnerability or equivalent external browser exploit."
+            ],
+            "cwe": "CWE-693",
+            "locations": [
+              {
+                "lines": "48-49, 62-67, 96-104",
+                "path": "tests/parity/ui_queue_smoke.py"
+              },
+              {
+                "lines": "7-8",
+                "path": "tests/parity/fake_ytdlp/yt_dlp/__main__.py"
+              },
+              {
+                "lines": "3-10",
+                "path": "tests/parity/README.md"
+              }
+            ],
+            "recommended_remediation": "Remove --no-sandbox, block non-loopback egress, and use a local embed stub; otherwise isolate the test in a credential-free container/VM.",
+            "rule": "Offline browser tests must not render external content without a process sandbox",
+            "severity": "medium",
+            "source_to_sink": "The fixture deliberately causes a media failure and waits for a live Pornhub embed; Chromium is launched with --no-sandbox and --no-proxy-server despite the harness claiming no network use.",
+            "title": "UI smoke test loads third-party content with Chromium's process sandbox disabled"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "ssrf.source-metadata-media-resolution",
+      "identity": {
+        "anchor": "ssrf/source-metadata-media-resolution",
+        "instance": "namespaced-clip-url-to-ytdlp-media"
+      },
+      "title": "Namespaced clip metadata controls server-side media destinations without egress validation",
+      "summary": "For xh: and ep: clips, recursively ingested source_url or url fields become the canonical page URL when they merely start with https://. The application passes that value to yt-dlp, accepts the extractor's HTTP(S) format and playlist URLs without host or address validation, and then fetches them through the full-video proxy, ffmpeg frame extraction, or persistent download path. A source-data writer can therefore induce server-side requests to unintended destinations; automatic preview prewarming supplies a trigger when a poisoned card is displayed.",
+      "severity": {
+        "level": "medium",
+        "score": 6.4,
+        "scoringSystem": "CVSS 3.1 (context-calibrated)",
+        "vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:C/C:L/I:L/A:H",
+        "rationale": "The vulnerable server-side egress can reach services unavailable to the source writer and can relay decodable media or consume bandwidth/storage, but exploitation requires write influence over local integration data for a known namespaced clip and useful disclosure depends on yt-dlp/media handling.",
+        "changeConditions": "Raise if a less-trusted remote scout writes source metadata directly or the host can reach sensitive unauthenticated management services; lower if all source files are generated only by the fully trusted operator and outbound network policy blocks private destinations."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "The source URL, canonicalization, yt-dlp operand, extracted format acceptance, urllib relay, ffmpeg use, and direct-network fallback are explicit in source. Exact internal-service response disclosure remains target-dependent and is reflected in severity."
+      },
+      "taxonomy": {
+        "category": "Server-side request forgery through unvalidated integration metadata",
+        "cwe": [
+          "CWE-918"
+        ]
+      },
+      "locations": [
+        {
+          "path": "app/index.py",
+          "startLine": 35,
+          "endLine": 40,
+          "role": "source"
+        },
+        {
+          "path": "app/store.py",
+          "startLine": 38,
+          "endLine": 48,
+          "role": "root_control"
+        },
+        {
+          "path": "app/index.py",
+          "startLine": 291,
+          "endLine": 302,
+          "role": "propagation"
+        },
+        {
+          "path": "app/clips.py",
+          "startLine": 577,
+          "endLine": 629,
+          "role": "extractor_sink"
+        },
+        {
+          "path": "app/clips.py",
+          "startLine": 1213,
+          "endLine": 1267,
+          "role": "response_sink"
+        },
+        {
+          "path": "app/clips.py",
+          "startLine": 927,
+          "endLine": 956,
+          "role": "native_media_sink"
+        },
+        {
+          "path": "app/clips.py",
+          "startLine": 158,
+          "endLine": 203,
+          "role": "persistent_download_sink"
+        },
+        {
+          "path": "app/phnet.py",
+          "startLine": 68,
+          "endLine": 103,
+          "role": "egress_control"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "source-url-ingestion",
+          "label": "Namespaced source URLs are copied without destination validation",
+          "path": "app/index.py",
+          "startLine": 35,
+          "endLine": 40,
+          "language": "python",
+          "role": "source",
+          "code": "for src in ('reddit_post', 'reddit_sub', 'reddit_user', 'origin_url', 'origin_site',\n            'xhamster_url', 'creator_url', 'uploader_url') + (('source', 'source_url', 'url') if ':' in vk else ()):\n    v = o.get(src)\n    if isinstance(v, str) and v.strip() and not m.get(src):\n        m[src] = v.strip()",
+          "explanation": "Recursive source-file records can supply the server-fetch URL for namespaced identifiers."
+        },
+        {
+          "id": "https-prefix-only",
+          "label": "The canonical URL control is only a string prefix check",
+          "path": "app/store.py",
+          "startLine": 38,
+          "endLine": 48,
+          "language": "python",
+          "role": "root_control",
+          "code": "def page_url_of(vk, meta=None):\n    ...\n    for k in ('source_url', 'url'):\n        u = (meta or {}).get(k)\n        if isinstance(u, str) and u.startswith('https://'):\n            if site == 'xh': u = re.sub(..., f'https://{XH_HOST}/', u)\n            return u\n    ...",
+          "explanation": "Arbitrary HTTPS hosts, ports, credentials, DNS results, and redirects are accepted. The xHamster rewrite changes recognized xHamster hosts but returns all other HTTPS URLs unchanged."
+        },
+        {
+          "id": "ytdlp-and-format-trust",
+          "label": "yt-dlp receives the metadata URL and returned media URLs are accepted by protocol only",
+          "path": "app/clips.py",
+          "startLine": 592,
+          "endLine": 623,
+          "language": "python",
+          "role": "extractor_sink",
+          "code": "src = ph_page_url(vk)\np = subprocess.run([_sys.executable, '-m', 'yt_dlp', '-j', '--no-playlist', '--no-warnings', *phnet.ytdlp_args(src),\n                    '--socket-timeout', '15', '-f', ..., phnet.route_url(src)], ...)\n...\nif f.get('url') and f.get('protocol') in ('https', 'http') and isinstance(h, int) ...:\n    fmts[h] = {'url': f['url'], 'headers': ..., 'height': h}",
+          "explanation": "Neither the initial target nor extracted progressive/HLS destinations are constrained to expected public site/CDN hosts or public IP ranges."
+        },
+        {
+          "id": "full-stream-response-sink",
+          "label": "Extracted URL is opened and relayed to the client",
+          "path": "app/clips.py",
+          "startLine": 1221,
+          "endLine": 1237,
+          "language": "python",
+          "role": "response_sink",
+          "code": "rec = resolve_full(vk, force=attempt > 0, fg=True)\nf = pick_format(rec, q) if rec.get('url') else None\n...\nreq = urllib.request.Request(f['url'], headers=hdr, method='GET')\ntry:\n    up = phnet.urlopen(req, timeout=20)",
+          "explanation": "The media proxy performs a server-side GET to the unchecked extracted URL and later streams its body."
+        },
+        {
+          "id": "unknown-hosts-go-direct",
+          "label": "Non-allowlisted hosts bypass the optional proxy and use direct urllib",
+          "path": "app/phnet.py",
+          "startLine": 68,
+          "endLine": 88,
+          "language": "python",
+          "role": "egress_control",
+          "code": "def active_proxy(url=None):\n    if url is not None and not is_walled_url(url): return None\n    return proxy_url() if proxy_alive() else None\n...\ndef urlopen(req, timeout=20, **kw):\n    url = req.full_url if isinstance(req, urllib.request.Request) else req\n    p = active_proxy(url)\n    if not p: return urllib.request.urlopen(req, timeout=timeout, **kw)",
+          "explanation": "The host suffix list chooses proxy routing; it is not an egress allowlist, so arbitrary metadata-selected hosts are fetched directly."
+        }
+      ],
+      "rootCause": {
+        "summary": "Integration-supplied public display URLs and trusted server-fetch URLs share one field. A startswith('https://') check substitutes for a destination policy, and downstream extractor URLs are trusted solely by protocol.",
+        "evidenceRefs": [
+          "source-url-ingestion",
+          "https-prefix-only",
+          "ytdlp-and-format-trust",
+          "unknown-hosts-go-direct"
+        ]
+      },
+      "remediation": "Separate display links from trusted server-fetch targets. Construct fetch URLs from validated site plus native identifier wherever possible. When a slug is required, parse the URL and require the exact documented site host or properly delimited site suffix and expected port. Resolve DNS and reject loopback, link-local, private, multicast, and other non-public addresses; repeat validation after every redirect and for every extractor-returned playlist, segment, or format URL. Add network-level egress controls as defense in depth, and rebuild cached indexes after deployment.",
+      "validation": {
+        "assertions": [
+          "A known namespaced clip can acquire source_url/url from recursively scanned JSON.",
+          "page_url_of returns arbitrary HTTPS metadata URLs.",
+          "resolve_full passes that URL to yt-dlp.",
+          "HTTP(S) format and HLS URLs are accepted without hostname/address validation.",
+          "full streaming, frame extraction, and downloads consume the resulting locations."
+        ],
+        "counterEvidence": [
+          "Bare Pornhub IDs use a fixed canonical URL.",
+          "The identifier must be syntactically valid and known to the index.",
+          "Initial metadata text must start with https://.",
+          "Useful response disclosure generally requires yt-dlp or ffmpeg to recognize attacker-selected content.",
+          "HTTP triggers remain inside the admitted-client boundary."
+        ],
+        "evidenceRefs": [
+          "source-url-ingestion",
+          "https-prefix-only",
+          "ytdlp-and-format-trust",
+          "full-stream-response-sink",
+          "unknown-hosts-go-direct"
+        ],
+        "limitations": [
+          "Redirect behavior and service-specific response extraction were not executed; concrete exfiltration depends on the targeted protocol/content."
+        ],
+        "method": "Independent static source-to-multiple-sinks validation",
+        "status": "validated",
+        "summary": "Confirmed a source writer controls the initial yt-dlp target and indirectly controls unchecked URLs later consumed by urllib and ffmpeg.",
+        "disposition": "report"
+      },
+      "attackPath": {
+        "controls": [
+          "Known-viewkey validation and fixed Pornhub URLs narrow scope.",
+          "yt-dlp and ffmpeg timeouts and concurrency limits reduce but do not prevent unintended egress.",
+          "The image proxy has a separate host allowlist and is not part of this finding."
+        ],
+        "impact": {
+          "level": "medium",
+          "rationale": "Can probe or interact with internal services and conditionally expose media-like responses or consume server bandwidth/storage."
+        },
+        "likelihood": {
+          "level": "medium",
+          "rationale": "Requires a compromised or malicious local integration writer but the trigger occurs automatically for displayed cards and through documented operations."
+        },
+        "preconditions": [
+          "Attacker can influence a scanned source/scout record for a known namespaced clip.",
+          "A user displays the poisoned current card or an admitted client requests a media operation."
+        ],
+        "reachability": {
+          "summary": "The source-to-sink path is complete for namespaced clips in supported multi-site ingestion.",
+          "attacker": "Source/scout metadata writer",
+          "entrypoint": "JSON under SOURCES_DIR or shared pool metadata",
+          "source": "source_url/url",
+          "sink": "yt-dlp, urllib full stream, ffmpeg frame extraction, and yt-dlp download",
+          "outcome": "Server-side requests to unintended network destinations with conditional response relay or resource consumption",
+          "preconditions": [
+            "Known xh:/ep: clip and media trigger."
+          ],
+          "evidenceRefs": [
+            "source-url-ingestion",
+            "https-prefix-only",
+            "ytdlp-and-format-trust",
+            "full-stream-response-sink"
+          ]
+        },
+        "steps": [
+          "Write an xh:/ep: source record for a known clip with attacker-selected HTTPS source_url/url.",
+          "The index copies the URL and page_url_of adopts it as canonical.",
+          "Displaying the card automatically calls /api/preview with cur=1, or an admitted client requests full media, frames, or download.",
+          "yt-dlp requests the metadata URL and emits media or playlist URLs.",
+          "urllib, ffmpeg, or the downloader accesses those unchecked destinations; the full proxy can relay decodable bytes."
+        ],
+        "summary": "A less-trusted source integration selects a namespaced clip's media page; the server resolves and fetches destinations chosen by that metadata or its extractor output."
+      },
+      "remediationTests": [
+        "Ingest xh:/ep: records whose URLs target loopback, link-local, RFC1918, IPv6 local, credentials-in-authority, alternate ports, and deceptive suffixes; assert media operations reject them before network access.",
+        "Test an allowed public source that redirects to a private address; assert every redirect hop is revalidated.",
+        "Return an allowed extraction page with a private progressive URL and HLS playlist/segment; assert urllib and ffmpeg never receive them.",
+        "Confirm canonical xHamster and Eporner hosts continue to resolve and legitimate CDN formats remain usable."
+      ],
+      "preventiveControls": [
+        "Use a single reusable egress-policy component for urllib, yt-dlp results, redirects, ffmpeg, and downloads.",
+        "Keep browser navigation URLs distinct from server-fetch URLs in the data model.",
+        "Apply an outbound firewall that blocks metadata and private address ranges for the application account/container."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "cand-ingestion-ssrf",
+        "mergedCandidateIds": [
+          "cand-egress-full-ssrf",
+          "cand-egress-download-ssrf",
+          "cand-egress-ffmpeg-ssrf",
+          "cand-baseline-ssrf"
+        ],
+        "originalCandidates": [
+          {
+            "title": "Scout-controlled non-Pornhub URLs are fetched server-side without destination validation",
+            "rule": "Source metadata must not select arbitrary server-side outbound destinations",
+            "cwe": "CWE-918",
+            "severity": "high",
+            "confidence": "high",
+            "attacker": "A contributor, scout, or digger able to write metadata for a known namespaced xh:/ep: clip.",
+            "source_to_sink": "build_index retains source_url/url; page_url_of accepts any https:// string; displayed current cards trigger preview prewarming; resolve_full/download pass the metadata URL to yt-dlp and non-allowlisted hosts are fetched directly.",
+            "concrete_impact": "Blind server-side requests to attacker-selected HTTPS endpoints, with redirects or extracted media URLs potentially reaching internal services; retrieved media may be proxied or persisted.",
+            "locations": [
+              {
+                "path": "app/index.py",
+                "lines": "35-40, 291-302"
+              },
+              {
+                "path": "app/store.py",
+                "lines": "38-48"
+              },
+              {
+                "path": "web/index.html",
+                "lines": "1738-1752"
+              },
+              {
+                "path": "app/api.py",
+                "lines": "310-325"
+              },
+              {
+                "path": "app/clips.py",
+                "lines": "158-203, 577-629"
+              },
+              {
+                "path": "app/phnet.py",
+                "lines": "45-47, 68-76"
+              }
+            ],
+            "counterevidence": [
+              "Known namespaced clip required.",
+              "Initial metadata URL must begin with https://.",
+              "Useful response disclosure depends on extractor/media behavior."
+            ],
+            "recommended_remediation": "Derive canonical per-site URLs or enforce exact site hosts, public resolved addresses, ports, and redirect/extracted-URL revalidation."
+          },
+          {
+            "attacker": "A contributor, scout, or digger able to write metadata for a known namespaced xh:/ep: clip.",
+            "concrete_impact": "Blind server-side requests to attacker-selected HTTPS endpoints, with redirects or extracted media URLs potentially reaching internal services; retrieved media may be proxied or persisted.",
+            "confidence": "high",
+            "counterevidence": [
+              "Known namespaced clip required.",
+              "Initial metadata URL must begin with https://.",
+              "Useful response disclosure depends on extractor/media behavior."
+            ],
+            "cwe": "CWE-918",
+            "locations": [
+              {
+                "lines": "35-40, 291-302",
+                "path": "app/index.py"
+              },
+              {
+                "lines": "38-48",
+                "path": "app/store.py"
+              },
+              {
+                "lines": "1738-1752",
+                "path": "web/index.html"
+              },
+              {
+                "lines": "310-325",
+                "path": "app/api.py"
+              },
+              {
+                "lines": "158-203, 577-629",
+                "path": "app/clips.py"
+              },
+              {
+                "lines": "45-47, 68-76",
+                "path": "app/phnet.py"
+              }
+            ],
+            "recommended_remediation": "Derive canonical per-site URLs or enforce exact site hosts, public resolved addresses, ports, and redirect/extracted-URL revalidation.",
+            "rule": "Source metadata must not select arbitrary server-side outbound destinations",
+            "severity": "high",
+            "source_to_sink": "build_index retains source_url/url; page_url_of accepts any https:// string; displayed current cards trigger preview prewarming; resolve_full/download pass the metadata URL to yt-dlp and non-allowlisted hosts are fetched directly.",
+            "title": "Scout-controlled non-Pornhub URLs are fetched server-side without destination validation"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.unbounded-request-threads",
+      "identity": {
+        "anchor": "resource-exhaustion/unbounded-request-threads",
+        "instance": "preview-queue-mlt-background-work"
+      },
+      "title": "Admitted clients can create unbounded background threads on preview, queue, and webhook paths",
+      "summary": "Several HTTP-triggered operations start raw daemon threads without a shared executor, queue cap, rate limit, or pending-work coalescing. Repeated uncached preview requests create duplicate workers that block behind a per-viewkey lock, queue/home reads start duplicate 30-clip sweeps, and an enabled MLT webhook starts a new credentialed delivery thread for each repeated request. An admitted client can exhaust process threads, memory, sockets, and upstream capacity.",
+      "severity": {
+        "level": "medium",
+        "score": 5.9,
+        "scoringSystem": "CVSS 3.1 (context-calibrated)",
+        "vector": "CVSS:3.1/AV:A/AC:L/PR:L/UI:N/S:U/C:N/I:L/A:H",
+        "rationale": "The attack is simple and can deny the whole service or flood an optional downstream integration, but the attacker must be admitted by the deployment's network authorization boundary and the webhook variant is configuration-dependent.",
+        "changeConditions": "Raise if ALLOWED_NETS includes untrusted shared networks or the service is exposed without an authenticating proxy; lower if the deployment is provably single-user and request concurrency is constrained externally."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Each route-to-thread path is explicit, and duplicate work is not marked pending until after the thread is created. Existing per-item locks serialize work inside workers but do not bound waiting threads."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled request-triggered background concurrency",
+        "cwe": [
+          "CWE-770"
+        ]
+      },
+      "locations": [
+        {
+          "path": "app/api.py",
+          "startLine": 310,
+          "endLine": 325,
+          "role": "preview_entrypoint"
+        },
+        {
+          "path": "app/clips.py",
+          "startLine": 431,
+          "endLine": 485,
+          "role": "preview_sink"
+        },
+        {
+          "path": "app/api.py",
+          "startLine": 249,
+          "endLine": 262,
+          "role": "queue_entrypoint"
+        },
+        {
+          "path": "app/index.py",
+          "startLine": 813,
+          "endLine": 818,
+          "role": "queue_sink"
+        },
+        {
+          "path": "app/api.py",
+          "startLine": 610,
+          "endLine": 624,
+          "role": "webhook_entrypoint"
+        },
+        {
+          "path": "app/store.py",
+          "startLine": 515,
+          "endLine": 542,
+          "role": "webhook_sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "preview-thread-per-miss",
+          "label": "Every pending preview request starts a raw thread",
+          "path": "app/api.py",
+          "startLine": 310,
+          "endLine": 323,
+          "language": "python",
+          "role": "source",
+          "code": "@app.get('/api/preview')\ndef api_preview(request: Request):\n    ...\n    r = dict(core.preview_for(vk, fetch=False))\n    if r.get('kind') is None and r.get('why') == 'not fetched yet':\n        core.prefetch_preview(vk)\n        r = {'kind': None, 'why': 'preview is being fetched', 'pending': True}",
+          "explanation": "fetch=False does not expose an in-flight state, so every duplicate request observes 'not fetched yet' and schedules another worker."
+        },
+        {
+          "id": "preview-lock-inside-thread",
+          "label": "Duplicate threads are created before per-key serialization",
+          "path": "app/clips.py",
+          "startLine": 439,
+          "endLine": 485,
+          "language": "python",
+          "role": "sink",
+          "code": "with prev_lock:\n    rec = PREV.get(vk); vl = prev_vk_locks.setdefault(vk, threading.Lock())\n...\nwith vl:\n    ...\n\ndef prefetch_preview(vk):\n    threading.Thread(target=lambda: preview_for(vk), daemon=True).start()",
+          "explanation": "The per-viewkey lock is acquired inside the spawned worker, so duplicate requests accumulate blocked operating-system threads rather than coalescing."
+        },
+        {
+          "id": "queue-sweep-thread",
+          "label": "Each cold queue computation starts another sweep thread",
+          "path": "app/index.py",
+          "startLine": 813,
+          "endLine": 818,
+          "language": "python",
+          "role": "sink",
+          "code": "missing = [c['viewkey'] for c in tonight if c['viewkey'] not in CLIPS]\n...\nsweep = list(dict.fromkeys(missing + to_sweep))[:30]\nif sweep:\n    threading.Thread(target=lambda: [clip_info(v) for v in sweep], daemon=True).start()",
+          "explanation": "The per-request list is capped at 30, but there is no global pending set or worker bound, so concurrent queue/home requests duplicate the same upstream lookups."
+        },
+        {
+          "id": "webhook-thread-per-refresh",
+          "label": "Repeated MLT-on requests spawn independent webhook threads",
+          "path": "app/store.py",
+          "startLine": 515,
+          "endLine": 542,
+          "language": "python",
+          "role": "sink",
+          "code": "if on:\n    if idx:\n        e = data[idx[0]]; e.update(f); e['updated_at'] = now.isoformat(timespec='seconds')\n        if not refresh_only:\n            wake = _write_mlt_wake(vk, f, now)\n...\nif wake is not None:\n    threading.Thread(target=_mlt_webhook, args=(wake,), daemon=True).start()",
+          "explanation": "An already-open request is refreshed and delivered again; each accepted POST creates a raw thread whose outbound call may block for eight seconds."
+        }
+      ],
+      "rootCause": {
+        "summary": "Expensive request-triggered background work uses ad hoc raw threads instead of a bounded, observable queue with per-key single-flight state.",
+        "evidenceRefs": [
+          "preview-thread-per-miss",
+          "preview-lock-inside-thread",
+          "queue-sweep-thread",
+          "webhook-thread-per-refresh"
+        ]
+      },
+      "remediation": "Route preview fetches, clip-info sweeps, and webhook deliveries through small bounded executors or queues with explicit capacity. Maintain per-viewkey pending Futures/single-flight state before worker creation, deduplicate queue sweep keys globally, coalesce repeated MLT wakes, and reject or drop work when capacity is full. Add per-client throttles and downstream delivery backoff/idempotency.",
+      "validation": {
+        "assertions": [
+          "Repeated uncached previews each call prefetch_preview.",
+          "The preview lock is acquired inside each spawned worker.",
+          "Queue and home recompute the same cold sweep and start one raw thread per request.",
+          "Repeated MLT-on POSTs for an existing open entry still produce a wake and webhook thread."
+        ],
+        "counterEvidence": [
+          "Preview and queue operations require known identifiers and admitted clients.",
+          "Each queue sweep contains at most 30 clips.",
+          "Preview data and clip data are cached after completion.",
+          "The MLT webhook path is disabled unless both URL and key are configured.",
+          "Full-video prewarming already uses a bounded executor and pending set, demonstrating a safe local pattern."
+        ],
+        "evidenceRefs": [
+          "preview-thread-per-miss",
+          "preview-lock-inside-thread",
+          "queue-sweep-thread",
+          "webhook-thread-per-refresh"
+        ],
+        "limitations": [
+          "Static review did not measure the host's thread limit or reverse-proxy throttling."
+        ],
+        "method": "Independent static concurrency-path validation",
+        "status": "validated",
+        "summary": "Confirmed three admitted-client paths can create threads faster than the work completes, with no global thread or queue bound.",
+        "disposition": "report"
+      },
+      "attackPath": {
+        "controls": [
+          "Known-viewkey and request-origin controls limit who can trigger work but do not rate-limit admitted clients.",
+          "Individual timeouts and cache completion eventually release workers but do not bound creation rate."
+        ],
+        "impact": {
+          "level": "medium",
+          "rationale": "Can deny the self-hosted service and, with webhook enabled, flood a credentialed downstream automation endpoint."
+        },
+        "likelihood": {
+          "level": "medium",
+          "rationale": "Simple concurrency is sufficient once an attacker is inside an allowed network; caches and the private deployment reduce exposure."
+        },
+        "preconditions": [
+          "Attacker can reach the application from ALLOWED_NETS.",
+          "For preview/queue, relevant entries remain cold or in flight; for MLT, webhook URL/key are configured."
+        ],
+        "reachability": {
+          "summary": "All three sinks are directly reachable from documented HTTP routes after admission checks.",
+          "attacker": "Admitted network client",
+          "entrypoint": "GET /api/preview, GET /api/queue or /api/home, optional POST /api/mlt",
+          "source": "Repeated requests while work is cold or pending",
+          "sink": "threading.Thread creation and blocking upstream work",
+          "outcome": "Service-wide resource exhaustion or authenticated downstream webhook flooding",
+          "preconditions": [
+            "Network admission; webhook configuration for the third variant."
+          ],
+          "evidenceRefs": [
+            "preview-thread-per-miss",
+            "queue-sweep-thread",
+            "webhook-thread-per-refresh"
+          ]
+        },
+        "steps": [
+          "Choose a known uncached clip or a cold queue, or use an enabled MLT webhook.",
+          "Issue concurrent /api/preview or /api/queue requests, or repeated same-origin-style POST /api/mlt requests.",
+          "Each request creates a daemon thread before pending work is coalesced.",
+          "Workers wait on per-key locks or block on upstream calls while new threads continue to accumulate.",
+          "Process scheduling, memory, sockets, or downstream request capacity is exhausted."
+        ],
+        "summary": "An admitted client repeats cold read or optional webhook operations faster than their background network work finishes."
+      },
+      "remediationTests": [
+        "Hold a preview fetch open, issue hundreds of duplicate /api/preview requests, and assert only one worker exists for that viewkey and total worker count stays bounded.",
+        "Issue concurrent cold /api/queue and /api/home requests and assert every viewkey is fetched once with a capped global queue.",
+        "With a slow fake webhook, repeat POST /api/mlt and assert delivery is coalesced and thread count remains fixed.",
+        "Fill the executor/queue and verify excess requests fail or degrade predictably without creating threads."
+      ],
+      "preventiveControls": [
+        "Use the existing PREWARM_POOL plus pending-set pattern for all asynchronous media work.",
+        "Centralize background-job capacity, metrics, and cancellation.",
+        "Apply endpoint concurrency/rate limits at the application or authenticating reverse proxy."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "cand-http-preview-thread-dos",
+        "mergedCandidateIds": [
+          "cand-egress-preview-thread-dos",
+          "cand-http-queue-thread-dos",
+          "cand-egress-mlt-thread-dos"
+        ],
+        "originalCandidates": [
+          {
+            "title": "Preview requests create unbounded operating-system threads",
+            "rule": "Bound asynchronous work triggered by HTTP requests",
+            "cwe": "CWE-400",
+            "severity": "medium",
+            "confidence": "high",
+            "attacker": "An HTTP client admitted by ALLOWED_NETS",
+            "violated_security_invariant": "A bounded request must not create unbounded background concurrency.",
+            "source_to_sink": "Each /api/preview request may call prefetch_preview for two next clips and the current clip; prefetch_preview creates a raw Thread on every call. Per-viewkey locks are acquired inside the thread, so duplicate requests accumulate blocked threads.",
+            "concrete_impact": "Thread, memory, scheduler, descriptor, and outbound-bandwidth exhaustion can deny service.",
+            "locations": [
+              {
+                "path": "app/api.py",
+                "lines": "310-325"
+              },
+              {
+                "path": "app/clips.py",
+                "lines": "431-485"
+              },
+              {
+                "path": "app/api.py",
+                "lines": "145-150"
+              }
+            ],
+            "supporting_source_evidence": [
+              "app/api.py:316-323 schedules up to three preview operations.",
+              "app/clips.py:484-485 starts unbounded raw daemon threads.",
+              "The per-key lock is inside spawned work."
+            ],
+            "counterevidence": [
+              "Known next keys are capped at two.",
+              "Results are cached and full-video prewarming is separately bounded.",
+              "Attacker must be an admitted client."
+            ],
+            "recommended_remediation": "Use a small bounded executor and per-viewkey pending set; drop duplicate or over-capacity work and rate-limit clients."
+          },
+          {
+            "attacker": "An HTTP client admitted by ALLOWED_NETS",
+            "concrete_impact": "Thread, memory, scheduler, descriptor, and outbound-bandwidth exhaustion can deny service.",
+            "confidence": "high",
+            "counterevidence": [
+              "Known next keys are capped at two.",
+              "Results are cached and full-video prewarming is separately bounded.",
+              "Attacker must be an admitted client."
+            ],
+            "cwe": "CWE-400",
+            "locations": [
+              {
+                "lines": "310-325",
+                "path": "app/api.py"
+              },
+              {
+                "lines": "431-485",
+                "path": "app/clips.py"
+              },
+              {
+                "lines": "145-150",
+                "path": "app/api.py"
+              }
+            ],
+            "recommended_remediation": "Use a small bounded executor and per-viewkey pending set; drop duplicate or over-capacity work and rate-limit clients.",
+            "rule": "Bound asynchronous work triggered by HTTP requests",
+            "severity": "medium",
+            "source_to_sink": "Each /api/preview request may call prefetch_preview for two next clips and the current clip; prefetch_preview creates a raw Thread on every call. Per-viewkey locks are acquired inside the thread, so duplicate requests accumulate blocked threads.",
+            "supporting_source_evidence": [
+              "app/api.py:316-323 schedules up to three preview operations.",
+              "app/clips.py:484-485 starts unbounded raw daemon threads.",
+              "The per-key lock is inside spawned work."
+            ],
+            "title": "Preview requests create unbounded operating-system threads",
+            "violated_security_invariant": "A bounded request must not create unbounded background concurrency."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "privilege-escalation.untrusted-tailscale-package",
+      "identity": {
+        "anchor": "privilege-escalation/untrusted-tailscale-package",
+        "instance": "ensure-up-persistent-deb"
+      },
+      "title": "A box-user-writable cached package is installed and executed as root during reset recovery",
+      "summary": "scripts/ensure-up.sh trusts the newest filename-matching Tailscale .deb under a directory owned by the unprivileged box account. When a reset removes the system binaries, the recurring recovery workflow installs that local package with sudo apt-get or extracts its binaries and sudo-installs them, then starts tailscaled under sudo. A process that compromises the box account can plant a crafted package and gain root execution at the next recovery.",
+      "severity": {
+        "level": "high",
+        "score": 8.1,
+        "scoringSystem": "CVSS 3.1 (context-calibrated)",
+        "vector": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:H",
+        "rationale": "Successful exploitation converts box-account code execution into root code execution with complete host impact. It requires control of the box account's persistent directory and the expected reset/missing-binary recovery condition, so attack complexity is elevated.",
+        "changeConditions": "Raise likelihood if resets are frequent or an attacker can remove the binaries; lower if the external scheduler or sudo policy cannot execute the privileged package/install/start operations shown."
+      },
+      "confidence": {
+        "level": "medium",
+        "rationale": "The user-writable source, privileged install fallback, root daemon launch, persistence path, and recurring reset workflow are explicit. The exact scheduler identity and sudoers policy are external to the repository, but the script itself requires passwordless sudo and the documented workflow states it runs every 15–30 minutes."
+      },
+      "taxonomy": {
+        "category": "Untrusted user-writable code crosses a privileged recovery boundary",
+        "cwe": [
+          "CWE-494"
+        ]
+      },
+      "locations": [
+        {
+          "path": "deploy/box.env",
+          "startLine": 18,
+          "endLine": 18,
+          "role": "source"
+        },
+        {
+          "path": "scripts/ensure-up.sh",
+          "startLine": 71,
+          "endLine": 81,
+          "role": "root_control"
+        },
+        {
+          "path": "scripts/ensure-up.sh",
+          "startLine": 93,
+          "endLine": 114,
+          "role": "privileged_install_sink"
+        },
+        {
+          "path": "scripts/ensure-up.sh",
+          "startLine": 118,
+          "endLine": 121,
+          "role": "trigger"
+        },
+        {
+          "path": "scripts/ensure-up.sh",
+          "startLine": 150,
+          "endLine": 155,
+          "role": "execution_sink"
+        },
+        {
+          "path": "docs/live-switch.md",
+          "startLine": 72,
+          "endLine": 79,
+          "role": "deployment_reachability"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "user-owned-persistence",
+          "label": "Recovery artifacts live in the box user's persistent home",
+          "path": "scripts/ensure-up.sh",
+          "startLine": 71,
+          "endLine": 81,
+          "language": "bash",
+          "role": "source",
+          "code": "PERSIST=$(_abs \"${TS_PERSIST_DIR:-$HOME/.persist/tailscale}\")\n...\nSUDO=\"sudo -n\"\n$SUDO true 2>/dev/null || { ...; SUDO=\"\"; }\nmkdir -p \"$PERSIST\" && chmod 700 \"$PERSIST\" ...",
+          "explanation": "Mode 0700 excludes other OS users but makes the box account authoritative for files later consumed by sudo operations. deploy/box.env sets /home/box/.persist/tailscale."
+        },
+        {
+          "id": "newest-deb-privileged-install",
+          "label": "The newest matching local package is installed with sudo",
+          "path": "scripts/ensure-up.sh",
+          "startLine": 93,
+          "endLine": 104,
+          "language": "bash",
+          "role": "privileged_install_sink",
+          "code": "install_tailscale(){\n  deb=$(ls -t \"$PERSIST\"/tailscale_*_amd64.deb 2>/dev/null | head -1)\n  if [ -n \"$deb\" ] && [ \"$SYS\" = 1 ]; then\n    if apt_q install -y --no-install-recommends \"$deb\" || { apt_q update && apt_q install -y --no-install-recommends \"$deb\"; }; then\n      ...; return 0\n    fi\n    ...\n  fi",
+          "explanation": "Selection trusts filename and mtime only. No root ownership, pinned version, digest, or signature check protects the local artifact."
+        },
+        {
+          "id": "extracted-binaries-installed-root",
+          "label": "Fallback copies package-controlled executables into privileged paths",
+          "path": "scripts/ensure-up.sh",
+          "startLine": 104,
+          "endLine": 110,
+          "language": "bash",
+          "role": "privileged_install_sink",
+          "code": "if [ -n \"$deb\" ]; then\n  t=$(mktemp -d)\n  if dpkg-deb -x \"$deb\" \"$t\" && $SUDO install -D -m 755 \"$t/usr/sbin/tailscaled\" \"$TAILSCALED_BIN\" \\\n     && $SUDO install -D -m 755 \"$t/usr/bin/tailscale\" \"$TAILSCALE_BIN\"; then\n    rm -rf \"$t\"; ...; return 0\n  fi\nfi",
+          "explanation": "Even without package maintainer scripts, attacker-chosen executable bytes are installed as root-owned system binaries."
+        },
+        {
+          "id": "installed-binary-launched-root",
+          "label": "Recovery starts the installed daemon under sudo",
+          "path": "scripts/ensure-up.sh",
+          "startLine": 150,
+          "endLine": 155,
+          "language": "bash",
+          "role": "execution_sink",
+          "code": "if [ -x \"$TAILSCALED_BIN\" ] && ! tsd_running; then\n  $SUDO mkdir -p \"$(dirname \"$TS_SOCKET\")\"\n  ...\n  $SUDO setsid nohup \"$TAILSCALED_BIN\" --state=\"$STATE\" --socket=\"$TS_SOCKET\" ${TS_DAEMON_ARGS:-} ... &\nfi",
+          "explanation": "The package-controlled tailscaled binary is executed with root authority after installation."
+        },
+        {
+          "id": "recurring-reset-workflow",
+          "label": "Reset recovery is expected and scheduled",
+          "path": "docs/live-switch.md",
+          "startLine": 72,
+          "endLine": 79,
+          "language": "markdown",
+          "role": "deployment_reachability",
+          "code": "- **Keep-alive / reset recovery**: `/workspace/ph-vote/scripts/ensure-up.sh` ... reinstalls Tailscale from the saved\n  `.deb`, restores the `picks` identity ...\n  ... a server-side routine runs it every 15-30 min.",
+          "explanation": "The missing-binary trigger and repeated execution are part of the documented live deployment rather than a hypothetical manual path."
+        }
+      ],
+      "rootCause": {
+        "summary": "Privileged recovery treats an unprivileged account's persistence directory as a trusted software supply source and authenticates artifacts only by filename.",
+        "evidenceRefs": [
+          "user-owned-persistence",
+          "newest-deb-privileged-install",
+          "extracted-binaries-installed-root",
+          "installed-binary-launched-root"
+        ]
+      },
+      "remediation": "Move cached packages and recovery state to a root-owned directory that the service/box account cannot modify. Pin an expected Tailscale version and verify the package's repository signature or an operator-pinned cryptographic digest before any privileged consumption. Remove the unauthenticated extraction/install fallback. Make the privileged component fetch or copy verified artifacts itself, and narrowly scope sudo to a root-owned wrapper that accepts no user-controlled paths.",
+      "validation": {
+        "assertions": [
+          "The persistence directory is under /home/box and created by the unprivileged script account.",
+          "The newest matching .deb is selected without integrity checks.",
+          "sudo apt-get consumes that path, or fallback extracts and sudo-installs package binaries.",
+          "The resulting tailscaled path is launched through sudo.",
+          "A reset removes system binaries and the recurring workflow reinstalls them."
+        ],
+        "counterEvidence": [
+          "Directory mode 0700 blocks unrelated Unix users.",
+          "A trigger requires binaries to be missing, normally after a documented reset.",
+          "Actual sudoers scoping and scheduler identity are not committed.",
+          "If the box account already has unrestricted root authority, there is no incremental gain."
+        ],
+        "evidenceRefs": [
+          "user-owned-persistence",
+          "newest-deb-privileged-install",
+          "extracted-binaries-installed-root",
+          "installed-binary-launched-root",
+          "recurring-reset-workflow"
+        ],
+        "limitations": [
+          "The external automation and sudoers configuration were unavailable; confidence is therefore medium despite a complete in-script source-to-sink path."
+        ],
+        "method": "Independent static privilege-boundary validation",
+        "status": "validated",
+        "summary": "Confirmed user-writable package selection leads to privileged binary installation and execution in the documented reset workflow.",
+        "disposition": "report"
+      },
+      "attackPath": {
+        "controls": [
+          "0700 persistence permissions prevent unrelated local users.",
+          "Missing-binary check prevents reinstall while healthy binaries remain.",
+          "Neither control authenticates content from the box account against the root boundary."
+        ],
+        "impact": {
+          "level": "high",
+          "rationale": "Arbitrary native code executes as root with complete host confidentiality, integrity, and availability impact."
+        },
+        "likelihood": {
+          "level": "medium",
+          "rationale": "The workflow is recurring and resets are expected, but exploitation requires prior box-account compromise and an external sudo policy consistent with the script."
+        },
+        "preconditions": [
+          "Attacker has code execution as the box account or equivalent write access to TS_PERSIST_DIR.",
+          "Passwordless sudo permits the operations used by ensure-up.sh.",
+          "Recovery encounters missing Tailscale binaries."
+        ],
+        "reachability": {
+          "summary": "The documented live reset process repeatedly reaches the privileged package consumption path.",
+          "attacker": "Compromised unprivileged box account",
+          "entrypoint": "TS_PERSIST_DIR/tailscale_*_amd64.deb",
+          "source": "Attacker-controlled package executables",
+          "sink": "sudo apt-get or sudo install followed by sudo execution of tailscaled",
+          "outcome": "Root code execution",
+          "preconditions": [
+            "Reset/missing binaries and applicable passwordless sudo policy."
+          ],
+          "evidenceRefs": [
+            "newest-deb-privileged-install",
+            "extracted-binaries-installed-root",
+            "installed-binary-launched-root",
+            "recurring-reset-workflow"
+          ]
+        },
+        "steps": [
+          "Create a valid tailscale_*_amd64.deb in /home/box/.persist/tailscale with attacker-controlled usr/sbin/tailscaled and make it newest.",
+          "Wait for or induce the documented reset condition in which system Tailscale binaries are absent.",
+          "The recurring ensure-up.sh invocation selects the crafted package.",
+          "sudo apt-get installs it, or dpkg-deb plus sudo install copies its executables into system paths.",
+          "ensure-up starts the attacker-controlled tailscaled binary under sudo, yielding root code execution."
+        ],
+        "summary": "A compromised box-account process plants a malicious cached package that the privileged reset-recovery path later installs and executes."
+      },
+      "remediationTests": [
+        "As the box account, place a newer filename-matching .deb in the persistence directory and assert recovery refuses it before any sudo operation.",
+        "Modify one byte of the approved cached package and assert digest/signature verification fails closed.",
+        "Verify the privileged package directory and every parent are root-owned and not group/world/user writable by the app account.",
+        "Exercise offline reset recovery with the pinned authentic package and confirm it still succeeds."
+      ],
+      "preventiveControls": [
+        "Separate unprivileged application persistence from root recovery artifacts.",
+        "Verify provenance and integrity immediately before privileged installation or execution.",
+        "Audit sudoers and external scheduler configuration so a writable script/account cannot broaden privileged commands."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "cand-deploy-package-root",
+        "originalCandidates": [
+          {
+            "title": "User-writable cached Tailscale packages cross the sudo boundary without authenticity verification",
+            "cwe": "CWE-494",
+            "severity": "high",
+            "confidence": "medium",
+            "attacker": "A malicious process running as the unprivileged box account that can write the persistent Tailscale directory before missing-binary recovery.",
+            "violated_security_invariant": "User-writable artifacts must not be installed or executed with root authority without integrity verification.",
+            "source_to_sink_explanation": "The box-user persistence directory supplies the newest filename-matching .deb to sudo apt-get; fallback extracts it and sudo-installs its executables, later launching tailscaled as root.",
+            "concrete_impact": "A same-user process can plant a crafted package and obtain root execution after recovery.",
+            "locations": [
+              {
+                "path": "scripts/ensure-up.sh",
+                "line": 71
+              },
+              {
+                "path": "scripts/ensure-up.sh",
+                "line": 81
+              },
+              {
+                "path": "scripts/ensure-up.sh",
+                "line": 94
+              },
+              {
+                "path": "scripts/ensure-up.sh",
+                "line": 98
+              },
+              {
+                "path": "scripts/ensure-up.sh",
+                "line": 104
+              },
+              {
+                "path": "scripts/ensure-up.sh",
+                "line": 154
+              },
+              {
+                "path": "docs/live-switch.md",
+                "line": 74
+              }
+            ],
+            "supporting_source_evidence": [
+              "deploy/box.env:18 places persistence under /home/box.",
+              "scripts/ensure-up.sh:119-121 reaches installation when binaries are missing.",
+              "No digest, signature, version, or ownership check precedes privileged use."
+            ],
+            "counterevidence": [
+              "Mode 0700 excludes other OS users.",
+              "Recovery requires missing binaries.",
+              "If the account has unrestricted NOPASSWD sudo there is no incremental gain."
+            ],
+            "recommended_remediation": "Use root-owned storage and verify a pinned version/signature/digest; remove unverified extraction fallback and narrow sudo."
+          },
+          {
+            "attacker": "A malicious process running as the unprivileged box account that can write the persistent Tailscale directory before missing-binary recovery.",
+            "concrete_impact": "A same-user process can plant a crafted package and obtain root execution after recovery.",
+            "confidence": "medium",
+            "counterevidence": [
+              "Mode 0700 excludes other OS users.",
+              "Recovery requires missing binaries.",
+              "If the account has unrestricted NOPASSWD sudo there is no incremental gain."
+            ],
+            "cwe": "CWE-494",
+            "locations": [
+              {
+                "line": 71,
+                "path": "scripts/ensure-up.sh"
+              },
+              {
+                "line": 81,
+                "path": "scripts/ensure-up.sh"
+              },
+              {
+                "line": 94,
+                "path": "scripts/ensure-up.sh"
+              },
+              {
+                "line": 98,
+                "path": "scripts/ensure-up.sh"
+              },
+              {
+                "line": 104,
+                "path": "scripts/ensure-up.sh"
+              },
+              {
+                "line": 154,
+                "path": "scripts/ensure-up.sh"
+              },
+              {
+                "line": 74,
+                "path": "docs/live-switch.md"
+              }
+            ],
+            "recommended_remediation": "Use root-owned storage and verify a pinned version/signature/digest; remove unverified extraction fallback and narrow sudo.",
+            "severity": "high",
+            "source_to_sink_explanation": "The box-user persistence directory supplies the newest filename-matching .deb to sudo apt-get; fallback extracts it and sudo-installs its executables, later launching tailscaled as root.",
+            "supporting_source_evidence": [
+              "deploy/box.env:18 places persistence under /home/box.",
+              "scripts/ensure-up.sh:119-121 reaches installation when binaries are missing.",
+              "No digest, signature, version, or ownership check precedes privileged use."
+            ],
+            "title": "User-writable cached Tailscale packages cross the sudo boundary without authenticity verification",
+            "violated_security_invariant": "User-writable artifacts must not be installed or executed with root authority without integrity verification."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "credential-exposure.user-owned-tailscale-state",
+      "identity": {
+        "anchor": "credential-exposure/user-owned-tailscale-state",
+        "instance": "ensure-up-state-archive"
+      },
+      "title": "Root Tailscale node state is downgraded to box-user-writable persistent storage",
+      "summary": "The live recovery script uses sudo to archive the root-owned Tailscale state directory, but shell redirection creates state.tgz in the unprivileged box account's persistence directory and chmods it 0600 for that account. The same user-controlled archive is later restored into /var/lib/tailscale without integrity or expected-identity verification. Compromise of the application account can therefore disclose reusable node identity material and can substitute a different valid state at the next reset.",
+      "severity": {
+        "level": "medium",
+        "score": 6.2,
+        "scoringSystem": "CVSS 3.1 (context-calibrated)",
+        "vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:C/C:H/I:L/A:L",
+        "rationale": "The archive is deliberately sufficient to restore the node without login, so access can outlive the host and affect tailnet identity. Exploitation requires same-account code execution, while concrete off-host reachability and the effect of substituted state depend on external Tailscale ACLs and machine authorization.",
+        "changeConditions": "Raise if the node has broad tailnet access or the box account is exposed through additional services; lower if state.tgz is independently encrypted to a root-only key and external ACLs make cloned state unusable."
+      },
+      "confidence": {
+        "level": "medium",
+        "rationale": "The root-to-user archive and unauthenticated restore are explicit, and documentation states the archive restores identity without login. Exact clone behavior and tailnet privileges depend on Tailscale state semantics and external ACLs not present in the repository."
+      },
+      "taxonomy": {
+        "category": "Privileged credential material stored across a weaker local trust boundary",
+        "cwe": [
+          "CWE-732"
+        ]
+      },
+      "locations": [
+        {
+          "path": "scripts/ensure-up.sh",
+          "startLine": 71,
+          "endLine": 81,
+          "role": "trust_boundary"
+        },
+        {
+          "path": "scripts/ensure-up.sh",
+          "startLine": 138,
+          "endLine": 145,
+          "role": "integrity_sink"
+        },
+        {
+          "path": "scripts/ensure-up.sh",
+          "startLine": 165,
+          "endLine": 173,
+          "role": "confidentiality_sink"
+        },
+        {
+          "path": "docs/live-switch.md",
+          "startLine": 72,
+          "endLine": 79,
+          "role": "impact_evidence"
+        },
+        {
+          "path": "deploy/box.env",
+          "startLine": 18,
+          "endLine": 18,
+          "role": "deployment_configuration"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "state-archive-user-directory",
+          "label": "The persistence directory belongs to the unprivileged box account",
+          "path": "scripts/ensure-up.sh",
+          "startLine": 71,
+          "endLine": 81,
+          "language": "bash",
+          "role": "trust_boundary",
+          "code": "PERSIST=$(_abs \"${TS_PERSIST_DIR:-$HOME/.persist/tailscale}\")\n...\nmkdir -p \"$PERSIST\" && chmod 700 \"$PERSIST\" ...",
+          "explanation": "deploy/box.env sets TS_PERSIST_DIR=/home/box/.persist/tailscale, so the account running the application and recovery script owns the archive location."
+        },
+        {
+          "id": "user-archive-restored-root",
+          "label": "Any nonempty user-controlled archive is restored as root daemon state",
+          "path": "scripts/ensure-up.sh",
+          "startLine": 138,
+          "endLine": 145,
+          "language": "bash",
+          "role": "integrity_sink",
+          "code": "if ! $SUDO test -s \"$STATE\"; then\n  if [ -s \"$PERSIST/state.tgz\" ]; then\n    ...\n    $SUDO mkdir -p \"$STATE_DIR\" && $SUDO chmod 700 \"$STATE_DIR\" && $SUDO tar -xzf \"$PERSIST/state.tgz\" -C \"$STATE_DIR\" \\\n      && $SUDO chown -R root:root \"$STATE_DIR\" && log \"restored tailscale state from $PERSIST/state.tgz\" ...",
+          "explanation": "No owner, digest, signature, node identity, or tailnet identity check authenticates the archive before it becomes root tailscaled state."
+        },
+        {
+          "id": "root-state-exported-to-user",
+          "label": "sudo reads root state but user-shell redirection owns the archive",
+          "path": "scripts/ensure-up.sh",
+          "startLine": 165,
+          "endLine": 173,
+          "language": "bash",
+          "role": "confidentiality_sink",
+          "code": "if [ \"$BS\" = Running ] && $SUDO test -s \"$STATE\"; then\n  new=$($SUDO cat \"$STATE\" | sha256sum | cut -d' ' -f1)\n  ...\n  tmp=$(mktemp \"$PERSIST/.state.XXXXXX\")\n  $SUDO tar -czf - -C \"$STATE_DIR\" --exclude='tailscaled.log*' --exclude='derpmap.cached.json' . > \"$tmp\" 2>>\"$LOG\"\n  if [ -s \"$tmp\" ]; then chmod 600 \"$tmp\" && mv -f \"$tmp\" \"$PERSIST/state.tgz\" ...",
+          "explanation": "sudo tar emits the complete root state to stdout; redirection and mktemp run as the box account, and chmod 600 protects the file for that account rather than root."
+        },
+        {
+          "id": "archive-restores-identity",
+          "label": "Documentation confirms the archive is reusable node identity",
+          "path": "docs/live-switch.md",
+          "startLine": 72,
+          "endLine": 79,
+          "language": "markdown",
+          "role": "impact_evidence",
+          "code": "`/workspace/ph-vote/scripts/ensure-up.sh` ... reinstalls Tailscale from the saved\n`.deb`, restores the `picks` identity from `~/.persist/tailscale/state.tgz` and starts tailscaled.\n... a server-side routine runs it every 15-30 min.",
+          "explanation": "The archive is not a benign cache: it preserves authentication identity sufficiently to avoid a new login after reset."
+        }
+      ],
+      "rootCause": {
+        "summary": "A reset-survival design places privileged node credentials and root-consumed state in storage owned and writable by the application/operator account, collapsing the intended privilege boundary in both directions.",
+        "evidenceRefs": [
+          "state-archive-user-directory",
+          "user-archive-restored-root",
+          "root-state-exported-to-user",
+          "archive-restores-identity"
+        ]
+      },
+      "remediation": "Store Tailscale state backups in a root-owned directory inaccessible to the application account, or encrypt them with a key unavailable to that account. Have a small root-owned recovery unit perform backup and restore without user-shell redirection. Authenticate every backup with a root-only MAC/signature and verify expected node/tailnet identity before daemon start. Keep package cache and state backups separate and apply least-privilege sudo.",
+      "validation": {
+        "assertions": [
+          "sudo tar reads the entire Tailscale state directory except logs/cache.",
+          "The output file is created and retained by the box account with mode 0600.",
+          "Documentation says this archive restores the node identity without login.",
+          "A replacement archive is extracted into the root state directory on reset without integrity or identity validation."
+        ],
+        "counterEvidence": [
+          "0700/0600 modes exclude unrelated Unix users.",
+          "The archive is outside version control.",
+          "The attacker needs same-box-account execution.",
+          "Substitution requires a valid Tailscale state to meaningfully alter network membership."
+        ],
+        "evidenceRefs": [
+          "root-state-exported-to-user",
+          "user-archive-restored-root",
+          "archive-restores-identity"
+        ],
+        "limitations": [
+          "The exact cryptographic contents, clone handling, node expiration, machine approval, and ACL permissions are external to this repository."
+        ],
+        "method": "Independent static credential-flow and recovery-path validation",
+        "status": "validated",
+        "summary": "Confirmed root-only daemon state is exported to a user-readable archive and later trusted as root state without authenticity checks.",
+        "disposition": "report"
+      },
+      "attackPath": {
+        "controls": [
+          "Unix modes exclude other local users but intentionally grant the box account access.",
+          "Recovery only restores when root state is missing and does not overwrite a healthy state."
+        ],
+        "impact": {
+          "level": "medium",
+          "rationale": "Reusable node identity material can extend compromise beyond the application host and may grant tailnet access; substituted state can alter service reachability."
+        },
+        "likelihood": {
+          "level": "medium",
+          "rationale": "Archive access is direct after box-account compromise, but actual off-host reuse and privileges depend on Tailscale controls."
+        },
+        "preconditions": [
+          "The live deployment enables ensure-up Tailscale persistence and has successfully archived a Running state.",
+          "Attacker compromises the box account.",
+          "For substitution impact, a valid alternate state and favorable external ACLs exist."
+        ],
+        "reachability": {
+          "summary": "The documented reset-recovery lifecycle routinely exports and later consumes this archive.",
+          "attacker": "Compromised box/application account",
+          "entrypoint": "User ownership of TS_PERSIST_DIR",
+          "source": "Root-owned /var/lib/tailscale state",
+          "sink": "User-readable state.tgz and later sudo tar restoration",
+          "outcome": "Credential disclosure and conditional node-identity substitution",
+          "preconditions": [
+            "Tailscale persistence enabled and archive created."
+          ],
+          "evidenceRefs": [
+            "root-state-exported-to-user",
+            "user-archive-restored-root",
+            "archive-restores-identity"
+          ]
+        },
+        "steps": [
+          "Obtain code execution as the box/application account.",
+          "Read /home/box/.persist/tailscale/state.tgz, which was created from root's live state.",
+          "Copy the archive off-host for attempted identity reuse, or replace it with another valid state.",
+          "After a reset removes the live state, recurring ensure-up.sh extracts the user-controlled archive into /var/lib/tailscale and starts root tailscaled.",
+          "The attacker retains or changes node identity subject to external Tailscale controls."
+        ],
+        "summary": "Compromise of the box account exposes a reset-surviving node identity and permits state substitution before privileged recovery."
+      },
+      "remediationTests": [
+        "As the box account, assert state.tgz cannot be read, replaced, or deleted.",
+        "Replace or modify a copied backup and assert restore fails authenticity verification before extraction.",
+        "Restore an authentic backup and verify the resulting node/tailnet identity matches an expected pinned identity.",
+        "Audit archive creation ownership and mode immediately after a healthy backup; require root ownership and no app-account access."
+      ],
+      "preventiveControls": [
+        "Keep privileged daemon credentials out of application-user storage.",
+        "Authenticate reset-survival artifacts before privileged restore.",
+        "Separate operational recovery into root-owned code and data with explicit identity checks."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "cand-deploy-state-disclosure",
+        "mergedCandidateIds": [
+          "cand-deploy-state-restore"
+        ],
+        "originalCandidates": [
+          {
+            "title": "Root-only Tailscale node credentials are downgraded to a same-user-readable archive",
+            "cwe": "CWE-732",
+            "severity": "medium",
+            "confidence": "high",
+            "attacker": "A malicious process running under the box account.",
+            "violated_security_invariant": "Root-owned node identity material must remain unavailable to application-account processes.",
+            "source_to_sink_explanation": "sudo tar reads the root state directory, but shell redirection writes it to a box-user-owned temporary file and persists state.tgz mode 0600 for that user.",
+            "concrete_impact": "The box account can copy reusable node identity material and potentially clone the machine's tailnet identity.",
+            "locations": [
+              {
+                "path": "scripts/ensure-up.sh",
+                "line": 12
+              },
+              {
+                "path": "scripts/ensure-up.sh",
+                "line": 166
+              },
+              {
+                "path": "scripts/ensure-up.sh",
+                "line": 170
+              },
+              {
+                "path": "scripts/ensure-up.sh",
+                "line": 171
+              },
+              {
+                "path": "scripts/ensure-up.sh",
+                "line": 172
+              },
+              {
+                "path": "docs/live-switch.md",
+                "line": 76
+              }
+            ],
+            "supporting_source_evidence": [
+              "Archive excludes only logs and a DERP map.",
+              "deploy/box.env:18 uses /home/box.",
+              "Docs state state.tgz restores identity without login."
+            ],
+            "counterevidence": [
+              "0700/0600 exclude other Unix users.",
+              "Archive is gitignored.",
+              "Attacker needs same-account execution."
+            ],
+            "recommended_remediation": "Store backups root-owned or encrypted to a key unavailable to the service account."
+          },
+          {
+            "attacker": "A malicious process running under the box account.",
+            "concrete_impact": "The box account can copy reusable node identity material and potentially clone the machine's tailnet identity.",
+            "confidence": "high",
+            "counterevidence": [
+              "0700/0600 exclude other Unix users.",
+              "Archive is gitignored.",
+              "Attacker needs same-account execution."
+            ],
+            "cwe": "CWE-732",
+            "locations": [
+              {
+                "line": 12,
+                "path": "scripts/ensure-up.sh"
+              },
+              {
+                "line": 166,
+                "path": "scripts/ensure-up.sh"
+              },
+              {
+                "line": 170,
+                "path": "scripts/ensure-up.sh"
+              },
+              {
+                "line": 171,
+                "path": "scripts/ensure-up.sh"
+              },
+              {
+                "line": 172,
+                "path": "scripts/ensure-up.sh"
+              },
+              {
+                "line": 76,
+                "path": "docs/live-switch.md"
+              }
+            ],
+            "recommended_remediation": "Store backups root-owned or encrypted to a key unavailable to the service account.",
+            "severity": "medium",
+            "source_to_sink_explanation": "sudo tar reads the root state directory, but shell redirection writes it to a box-user-owned temporary file and persists state.tgz mode 0600 for that user.",
+            "supporting_source_evidence": [
+              "Archive excludes only logs and a DERP map.",
+              "deploy/box.env:18 uses /home/box.",
+              "Docs state state.tgz restores identity without login."
+            ],
+            "title": "Root-only Tailscale node credentials are downgraded to a same-user-readable archive",
+            "violated_security_invariant": "Root-owned node identity material must remain unavailable to application-account processes."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.unbounded-source-scan",
+      "identity": {
+        "anchor": "resource-exhaustion/unbounded-source-scan",
+        "instance": "recursive-json-html-index-build"
+      },
+      "title": "Malformed or non-regular source files can stall or abort the entire index rebuild",
+      "summary": "The recursive source scanner opens every matching JSON or saved HTML path without verifying a regular no-follow file, enforcing byte or aggregate limits, or isolating all per-file parsing failures. A source writer can block the rebuild with a FIFO/device or exhaust memory with a large file. Separately, broad glob patterns feed narrower unchecked filename regexes, so a tiny malformed JSON or HTML filename raises before the local error handling and aborts the whole build.",
+      "severity": {
+        "level": "medium",
+        "score": 5.6,
+        "scoringSystem": "CVSS 3.1 (context-calibrated)",
+        "vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:N/I:L/A:H",
+        "rationale": "A writer in the source-integration boundary can deterministically prevent fresh deployments from building an index or leave existing deployments stale using tiny inputs, and can create process-level memory/blocking pressure with special or oversized files. The attacker needs local write influence over SOURCES_DIR.",
+        "changeConditions": "Raise if a remote automation service can write directly into SOURCES_DIR; lower if the directory is strictly operator-only and all producers enforce regular-file and size constraints externally."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "The open/read, unchecked regex dereferences, whole-build catch, and missing per-file bounds are explicit in source. Exact memory exhaustion depends on host limits but the tiny filename aborts are deterministic."
+      },
+      "taxonomy": {
+        "category": "Unbounded and non-isolated file-backed source ingestion",
+        "cwe": [
+          "CWE-400",
+          "CWE-20"
+        ]
+      },
+      "locations": [
+        {
+          "path": "app/store.py",
+          "startLine": 66,
+          "endLine": 71,
+          "role": "unbounded_parser"
+        },
+        {
+          "path": "app/index.py",
+          "startLine": 64,
+          "endLine": 77,
+          "role": "filename_abort"
+        },
+        {
+          "path": "app/index.py",
+          "startLine": 95,
+          "endLine": 130,
+          "role": "root_control"
+        },
+        {
+          "path": "app/index.py",
+          "startLine": 157,
+          "endLine": 176,
+          "role": "availability_sink"
+        },
+        {
+          "path": "app/server.py",
+          "startLine": 72,
+          "endLine": 79,
+          "role": "startup_effect"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "unbounded-json-load",
+          "label": "JSON helper reads an unrestricted path to completion",
+          "path": "app/store.py",
+          "startLine": 66,
+          "endLine": 71,
+          "language": "python",
+          "role": "unbounded_parser",
+          "code": "def load_json(p, default=None):\n    try:\n        with open(p) as f:\n            return json.load(f)\n    except Exception:\n        return default",
+          "explanation": "The catch handles parse exceptions only after reads return; it does not limit bytes, reject symlinks/special files, or prevent a FIFO/device from blocking."
+        },
+        {
+          "id": "recursive-path-open",
+          "label": "Recursive scanning trusts every matching file path",
+          "path": "app/index.py",
+          "startLine": 95,
+          "endLine": 115,
+          "language": "python",
+          "role": "root_control",
+          "code": "for root, dirs, files in os.walk(WS):\n    dirs[:] = [x for x in dirs if ...]\n    for fn in files:\n        if not fn.endswith('.json') or fn.startswith(('_exclude', '_prior')):\n            continue\n        p = os.path.join(root, fn)\n        ...\n        try:\n            for vk, o in items_of(load_json(p)):\n                ...\n        except RecursionError:\n            pass",
+          "explanation": "Directory filtering does not lstat or confine each file target, and there is no regular-file, symlink, byte, record, depth, or aggregate budget."
+        },
+        {
+          "id": "unbounded-html-read",
+          "label": "Saved HTML is read wholly without a file budget",
+          "path": "app/index.py",
+          "startLine": 116,
+          "endLine": 124,
+          "language": "python",
+          "role": "unbounded_parser",
+          "code": "for p in glob.glob(os.path.join(WS, 'ph-vid-*.html')) + glob.glob(...):\n    vk = re.search(r'(?:ph-vid-|_page_)([0-9a-z]+)\\.html$', p).group(1)\n    ...\n    try:\n        s = open(p, errors='ignore').read()\n    except Exception:\n        continue",
+          "explanation": "A matching path is read completely, and the narrower regex dereference occurs before the exception boundary."
+        },
+        {
+          "id": "unchecked-dated-filename",
+          "label": "Broad JSON globs feed unchecked date captures",
+          "path": "app/index.py",
+          "startLine": 64,
+          "endLine": 77,
+          "language": "python",
+          "role": "filename_abort",
+          "code": "for p in sorted(glob.glob(os.path.join(WS, 'ph-midnight-final-*.json'))):\n    d = re.search(r'(\\d{4}-\\d\\d-\\d\\d)', p).group(1)\n...\nfor p in sorted(glob.glob(os.path.join(WS, 'ph-hourly-lace-dig-*.json'))):\n    m = re.search(r'(\\d{4}-\\d\\d-\\d\\d)(?:-(\\d\\d)(\\d\\d))?', p)\n    d, hh, mm = m.group(1), m.group(2) or '00', m.group(3) or '00'",
+          "explanation": "A tiny filename matching the glob but lacking a date raises AttributeError and stops build_index."
+        },
+        {
+          "id": "whole-build-failure",
+          "label": "One source failure aborts the complete refresh",
+          "path": "app/index.py",
+          "startLine": 157,
+          "endLine": 176,
+          "language": "python",
+          "role": "availability_sink",
+          "code": "def refresh_index(force=False):\n    ...\n    try:\n        ...\n        picks = build_index()\n        INDEX.update(...)\n        ...\n    except Exception as e:\n        log('index build failed:', repr(e))\n    finally:\n        building[0] = False",
+          "explanation": "The top-level catch keeps the process alive but cannot commit valid partial input; a fresh deployment remains empty and an existing deployment stays stale."
+        }
+      ],
+      "rootCause": {
+        "summary": "SOURCES_DIR is treated as a trusted collection instead of a parsing boundary: filename grammar, file type/confinement, resource budgets, and per-file fault isolation are not enforced before blocking reads and regex captures.",
+        "evidenceRefs": [
+          "unbounded-json-load",
+          "recursive-path-open",
+          "unbounded-html-read",
+          "unchecked-dated-filename",
+          "whole-build-failure"
+        ]
+      },
+      "remediation": "For each candidate path, use lstat/open-no-follow semantics and accept only regular files whose resolved/opened identity remains beneath SOURCES_DIR. Enforce per-file and aggregate byte, record, nesting, string-length, and processing-time budgets before parsing. Validate basenames with fullmatch and check every match before accessing groups. Put all filename parsing and file processing inside a per-file exception boundary so one bad source is skipped and logged. Consider a resource-limited worker for source parsing and commit only a complete validated snapshot.",
+      "validation": {
+        "assertions": [
+          "A malformed midnight/hourly filename can match the glob while the subsequent date regex returns None.",
+          "A malformed saved-page name can match its glob while the viewkey regex returns None outside the try block.",
+          "Recursive JSON file entries are opened without lstat, no-follow, confinement, or byte limits.",
+          "HTML paths are read completely.",
+          "refresh_index catches only around the entire build."
+        ],
+        "counterEvidence": [
+          "os.walk does not follow directory symlinks by default.",
+          "Own code/media/cache directories are excluded at the directory level.",
+          "Normal JSON exceptions return defaults and RecursionError is caught in one traversal.",
+          "An existing index cache remains available after a failed refresh, though stale."
+        ],
+        "evidenceRefs": [
+          "recursive-path-open",
+          "unbounded-html-read",
+          "unchecked-dated-filename",
+          "whole-build-failure"
+        ],
+        "limitations": [
+          "The exact permissions granted to each external scout/source producer are deployment-dependent."
+        ],
+        "method": "Independent static file-ingestion validation",
+        "status": "validated",
+        "summary": "Confirmed deterministic whole-build aborts from glob/regex mismatches and unbounded blocking reads from source-controlled paths.",
+        "disposition": "report"
+      },
+      "attackPath": {
+        "controls": [
+          "Directory exclusions avoid scanning known code/media/cache directories.",
+          "A whole-build try/finally prevents a permanent building flag, but it does not preserve partial progress or bound parsing."
+        ],
+        "impact": {
+          "level": "medium",
+          "rationale": "Can make a fresh application empty, keep an existing index indefinitely stale, or exhaust shared memory/block a build."
+        },
+        "likelihood": {
+          "level": "medium",
+          "rationale": "Tiny deterministic filename triggers exist, but the attacker needs local source-write capability."
+        },
+        "preconditions": [
+          "Attacker or compromised automation can create entries in SOURCES_DIR.",
+          "An index build or refresh is triggered."
+        ],
+        "reachability": {
+          "summary": "SOURCES_DIR is recursively scanned by design, including bot/scout-produced files.",
+          "attacker": "Source-directory writer or compromised automation",
+          "entrypoint": "Matching JSON/HTML path beneath SOURCES_DIR",
+          "source": "Filename, file type, and file contents",
+          "sink": "Unchecked regex group, json.load, or whole-file read in build_index",
+          "outcome": "Index rebuild abort, indefinite block, or memory exhaustion",
+          "preconditions": [
+            "Index refresh occurs."
+          ],
+          "evidenceRefs": [
+            "recursive-path-open",
+            "unbounded-html-read",
+            "unchecked-dated-filename",
+            "whole-build-failure"
+          ]
+        },
+        "steps": [
+          "Create ph-midnight-final-invalid.json, ph-hourly-lace-dig-invalid.json, or ph-vid-invalid!.html to trigger an unchecked capture; alternatively place a matching file symlink/FIFO/oversized regular file.",
+          "Startup or an asynchronous refresh calls build_index.",
+          "Filename parsing raises before its per-file try block, or open/json.load/read blocks or consumes unbounded memory.",
+          "The top-level refresh handler logs the exception without committing new picks.",
+          "A fresh service has no usable index or an existing service remains stale; resource-heavy inputs can degrade the process itself."
+        ],
+        "summary": "A source-data writer places a tiny malformed filename or a blocking/oversized matching file under SOURCES_DIR, preventing a complete index refresh."
+      },
+      "remediationTests": [
+        "Add glob-matching JSON filenames without ISO dates and assert they are skipped while valid sources still build.",
+        "Add saved-page filenames with uppercase/punctuation outside the viewkey grammar and assert the rebuild succeeds.",
+        "Add a file symlink escaping SOURCES_DIR and a FIFO/special-file fixture; assert the scanner rejects them without opening.",
+        "Add oversized JSON and HTML fixtures and assert byte/aggregate limits fail fast without replacing the last good index.",
+        "Verify a malformed file cannot keep building true or block later valid refreshes."
+      ],
+      "preventiveControls": [
+        "Centralize safe source-file opening and budget enforcement.",
+        "Use strict fullmatch filename grammars before opening files.",
+        "Run integration parsers with filesystem and resource isolation appropriate to their trust level."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "cand-ingestion-source-file-dos",
+        "mergedCandidateIds": [
+          "cand-ingestion-dated-name-dos",
+          "cand-ingestion-html-name-dos"
+        ],
+        "originalCandidates": [
+          {
+            "title": "Recursive source scanning follows unbounded and non-regular file inputs",
+            "rule": "Bound source scanning to regular files and size budgets",
+            "cwe": "CWE-400",
+            "severity": "medium",
+            "confidence": "medium",
+            "attacker": "A writer able to place files, file symlinks, or special files in SOURCES_DIR.",
+            "source_to_sink": "Recursive scanning opens matching JSON/HTML paths without lstat, symlink confinement, byte limits, aggregate budgets, or streaming parsing.",
+            "concrete_impact": "Large files can exhaust memory and FIFOs/devices can block index construction.",
+            "locations": [
+              {
+                "path": "app/store.py",
+                "lines": "66-71"
+              },
+              {
+                "path": "app/index.py",
+                "lines": "88-130, 157-181"
+              }
+            ],
+            "counterevidence": [
+              "Directory symlinks are not followed by os.walk by default.",
+              "Requires filesystem write authority to SOURCES_DIR."
+            ],
+            "recommended_remediation": "Open only verified regular no-follow files beneath the root and impose per-file/aggregate limits."
+          },
+          {
+            "attacker": "A writer able to place files, file symlinks, or special files in SOURCES_DIR.",
+            "concrete_impact": "Large files can exhaust memory and FIFOs/devices can block index construction.",
+            "confidence": "medium",
+            "counterevidence": [
+              "Directory symlinks are not followed by os.walk by default.",
+              "Requires filesystem write authority to SOURCES_DIR."
+            ],
+            "cwe": "CWE-400",
+            "locations": [
+              {
+                "lines": "66-71",
+                "path": "app/store.py"
+              },
+              {
+                "lines": "88-130, 157-181",
+                "path": "app/index.py"
+              }
+            ],
+            "recommended_remediation": "Open only verified regular no-follow files beneath the root and impose per-file/aggregate limits.",
+            "rule": "Bound source scanning to regular files and size budgets",
+            "severity": "medium",
+            "source_to_sink": "Recursive scanning opens matching JSON/HTML paths without lstat, symlink confinement, byte limits, aggregate budgets, or streaming parsing.",
+            "title": "Recursive source scanning follows unbounded and non-regular file inputs"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "resource-amplification.synthetic-range-skip",
+      "identity": {
+        "anchor": "resource-amplification/synthetic-range-skip",
+        "instance": "media-full-upstream-ignores-range"
+      },
+      "title": "Synthetic range fallback amplifies a one-byte request into up to 32 MiB of upstream reads",
+      "summary": "When an upstream media server ignores Range and returns 200 with a numeric Content-Length, full_plan synthesizes a 206 response for offsets through 32 MiB. full_chunks implements this by reading and discarding every byte before the requested offset. An admitted client can repeatedly request one byte near the threshold and force roughly 32 MiB of hidden server-side bandwidth and blocking work per response.",
+      "severity": {
+        "level": "low",
+        "score": 3.7,
+        "scoringSystem": "CVSS 3.1 (context-calibrated)",
+        "vector": "CVSS:3.1/AV:A/AC:H/PR:L/UI:N/S:U/C:N/I:N/A:L",
+        "rationale": "The amplification factor is large and streaming lacks a global byte budget, but exploitation requires an admitted client and a known upstream that ignores Range and supplies a numeric length. Impact is primarily bandwidth and worker degradation on a self-hosted service.",
+        "changeConditions": "Raise if many supported upstreams ignore Range or the route is exposed to untrusted networks; lower if a reverse proxy globally limits concurrent streams and upstream bytes."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "The inclusive 32 MiB threshold and discard loop are explicit. Upstream-specific prevalence is unknown and reflected in attack complexity and severity."
+      },
+      "taxonomy": {
+        "category": "Asymmetric server-side bandwidth amplification",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "app/clips.py",
+          "startLine": 1213,
+          "endLine": 1267,
+          "role": "root_control"
+        },
+        {
+          "path": "app/clips.py",
+          "startLine": 1269,
+          "endLine": 1279,
+          "role": "resource_sink"
+        },
+        {
+          "path": "app/api.py",
+          "startLine": 405,
+          "endLine": 414,
+          "role": "http_sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "synthetic-range-threshold",
+          "label": "A 206 is synthesized through a 32 MiB offset",
+          "path": "app/clips.py",
+          "startLine": 1245,
+          "endLine": 1261,
+          "language": "python",
+          "role": "root_control",
+          "code": "elif rng and up.status == 200:\n    # still ignored: serve the asked range ourselves when it is cheap, else an honest full 200\n    start = int(mr.group(1)) if mr else None\n    end = int(mr.group(2)) if mr and mr.group(2) else (total - 1 if total else None)\n    if mr and total and start < total and start <= 32 * 1024 * 1024:\n        end = min(end, total - 1)\n        status, skip, limit = 206, start, end - start + 1",
+          "explanation": "A request such as bytes=33554432-33554432 produces a one-byte downstream response while setting skip to 32 MiB."
+        },
+        {
+          "id": "discard-prefix-loop",
+          "label": "The server reads and discards the complete prefix",
+          "path": "app/clips.py",
+          "startLine": 1269,
+          "endLine": 1279,
+          "language": "python",
+          "role": "resource_sink",
+          "code": "def full_chunks(up, skip, limit):\n    while skip > 0:\n        chunk = up.read(min(65536, skip))\n        if not chunk: return\n        skip -= len(chunk)\n    while limit is None or limit > 0:\n        chunk = up.read(65536 if limit is None else min(65536, limit))\n        if not chunk: break\n        yield chunk",
+          "explanation": "Discarded upstream bytes are not charged to a global or per-client budget, and the client receives only limit bytes after the skip."
+        },
+        {
+          "id": "range-http-route",
+          "label": "The raw streaming route exposes the skip behavior",
+          "path": "app/api.py",
+          "startLine": 405,
+          "endLine": 414,
+          "language": "python",
+          "role": "http_sink",
+          "code": "def _full(req, vk):\n    plan = core.full_plan(vk, q1(req, 'q', None), req.headers.get('Range'))\n    ...\n    _, status, hdrs, up, skip, limit = plan\n    def chunks():\n        try: yield from core.full_chunks(up, skip, limit)\n    ...\n    return RawStream(status, hdrs, chunks(), on_close=up.close)",
+          "explanation": "An admitted HTTP client's Range header directly determines the hidden skip work performed during streaming."
+        }
+      ],
+      "rootCause": {
+        "summary": "The server emulates unsupported upstream seeking by linear prefix discard without accounting for the ratio between downstream response bytes and upstream work.",
+        "evidenceRefs": [
+          "synthetic-range-threshold",
+          "discard-prefix-loop",
+          "range-http-route"
+        ]
+      },
+      "remediation": "Do not synthesize nonzero ranges by linear discard. If upstream ignores a range, return an honest 200, reject the seek with 416/502, or use a bounded local cache designed for random access. If a small fallback is retained, reduce the threshold substantially and enforce global/per-client concurrent-stream and total-upstream-byte budgets based on bytes consumed, not bytes returned.",
+      "validation": {
+        "assertions": [
+          "A valid bytes=start-end header controls start and end.",
+          "An upstream 200 with numeric length enters the synthetic 206 branch.",
+          "start equal to 32 MiB is accepted.",
+          "full_chunks reads start bytes before yielding limit bytes."
+        ],
+        "counterEvidence": [
+          "The route requires an admitted client and known clip.",
+          "The condition applies only when the upstream ignores Range.",
+          "Offsets above 32 MiB receive an honest full 200 rather than synthetic 206.",
+          "Per-read chunks are 64 KiB and individual network calls have timeouts."
+        ],
+        "evidenceRefs": [
+          "synthetic-range-threshold",
+          "discard-prefix-loop",
+          "range-http-route"
+        ],
+        "limitations": [
+          "Static review did not measure how often production upstreams ignore Range or external bandwidth limits."
+        ],
+        "method": "Independent static arithmetic and source-to-sink validation",
+        "status": "validated",
+        "summary": "Confirmed an inclusive 32 MiB skip for a one-byte downstream range and no stream-wide byte/concurrency budget.",
+        "disposition": "report"
+      },
+      "attackPath": {
+        "controls": [
+          "32 MiB bounds individual hidden prefix work.",
+          "Cross-site read guards block ordinary foreign web pages but not admitted direct clients."
+        ],
+        "impact": {
+          "level": "low",
+          "rationale": "Consumes bandwidth and streaming worker time but does not cross confidentiality or integrity boundaries."
+        },
+        "likelihood": {
+          "level": "medium",
+          "rationale": "The request is trivial once a compatible upstream is known, but compatibility and private network admission are prerequisites."
+        },
+        "preconditions": [
+          "Admitted client access.",
+          "Known clip and upstream that ignores Range with a length greater than the chosen offset."
+        ],
+        "reachability": {
+          "summary": "The client's standard Range header reaches the fallback arithmetic and discard loop.",
+          "attacker": "Admitted network client",
+          "entrypoint": "GET /media/full/<known>.mp4 with Range",
+          "source": "Range start/end",
+          "sink": "full_chunks prefix discard",
+          "outcome": "Large hidden upstream read for tiny downstream response",
+          "preconditions": [
+            "Upstream 200 response to Range."
+          ],
+          "evidenceRefs": [
+            "synthetic-range-threshold",
+            "discard-prefix-loop",
+            "range-http-route"
+          ]
+        },
+        "steps": [
+          "Choose a known clip whose selected upstream format returns 200 to Range requests with Content-Length.",
+          "Request Range: bytes=33554432-33554432 on /media/full/<viewkey>.mp4.",
+          "After one fresh-URL retry, full_plan returns a synthetic one-byte 206 plan with skip=33554432.",
+          "full_chunks downloads and discards 32 MiB before yielding one byte.",
+          "Repeat concurrently to consume server egress/ingress bandwidth and blocking stream capacity."
+        ],
+        "summary": "An admitted client requests a one-byte range near the fallback threshold from a stream whose upstream ignores Range."
+      },
+      "remediationTests": [
+        "Use a fake upstream that ignores Range; request one byte at the maximum allowed offset and assert the server does not read the prefix.",
+        "Verify unsupported nonzero ranges return the documented honest response without hidden discard.",
+        "Issue concurrent range requests and assert a global stream/byte budget caps upstream consumption.",
+        "Confirm normal upstream 206 pass-through remains seekable and preserves Content-Range."
+      ],
+      "preventiveControls": [
+        "Account for upstream bytes separately from downstream response size.",
+        "Bound concurrent full-media streams per client and globally.",
+        "Prefer upstream-supported ranges or local random-access storage over discard-based emulation."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "cand-egress-range-amplification"
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-8dce785502502041",
+        "label": "Architecture and trust-boundary mapping",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "riskArea": "Repository-wide architecture",
+        "notes": "The independent architecture review returned and is awaiting source-anchor reconciliation."
+      },
+      {
+        "id": "surface-14487fb81f25abdb",
+        "label": "HTTP guards, browser rendering, and request-triggered work",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "riskArea": "HTTP/browser boundary",
+        "notes": "Worker candidates cand-http-xh-url-xss, cand-http-mlt-url-xss, cand-http-preview-thread-dos, cand-http-queue-thread-dos, and overlapping baseline/egress candidates await validation."
+      },
+      {
+        "id": "surface-d6eb975764810567",
+        "label": "Filesystem, outbound network, media, and credential sinks",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "riskArea": "Filesystem and egress",
+        "notes": "Worker SSRF and resource-exhaustion candidates await validation."
+      },
+      {
+        "id": "surface-21de5f088e3d8df6",
+        "label": "Deployment scripts and Tailscale recovery",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "riskArea": "Privileged recovery and secrets",
+        "notes": "Three Tailscale persistence/recovery candidates await validation and external-prerequisite calibration."
+      },
+      {
+        "id": "surface-e0d87c2de1c86a7c",
+        "label": "Source ingestion, deserialization, duplicate suppression, and cache rebuilds",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "riskArea": "Data ingestion and stored metadata",
+        "notes": "Independent ingestion review completed 22 files and returned seven candidates preserved below for parent validation."
+      },
+      {
+        "id": "surface-a4bb35589d4c46e7",
+        "label": "Unvalidated integration URLs in target=_blank links",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Browser URL-context injection",
+        "notes": "Source review confirms MLT_POOL and XH_FAVORITES URLs reach href without scheme validation, but every affected anchor uses target=_blank with noopener (and the xHamster links also use noreferrer). A disowned newly created target does not have the application document's origin, so the candidates did not establish execution in the private application origin. Unsafe schemes should still be filtered as defense in depth.",
+        "candidateIds": [
+          "cand-http-xh-url-xss",
+          "cand-http-mlt-url-xss",
+          "cand-baseline-url-xss",
+          "cand-ingestion-mlt-url-xss",
+          "cand-ingestion-xh-url-xss"
+        ]
+      },
+      {
+        "id": "surface-ae1bda44353c84f1",
+        "label": "Optional Docker remote publication without per-user login",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Deployment authentication boundary",
+        "notes": "The application deliberately authorizes clients by network and Host rather than per-user identity. Docker publishes loopback by default; README.md:169-174 explicitly requires loopback, VPN, or an authenticating reverse proxy and says not to expose the app to the internet. Setting PUBLISH_ADDR and ALLOWED_NETS intentionally admits those peers, so no control bypass was shown.",
+        "candidateIds": [
+          "cand-baseline-docker-unauth"
+        ]
+      },
+      {
+        "id": "surface-5b5a4ce1ca0c4a99",
+        "label": "Remaining UI assets, test harnesses, and regression tests",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "riskArea": "Stored browser state and developer tooling",
+        "notes": "The final 19 tracked files were fully reviewed. Three new candidates are retained below for parent source validation."
+      },
+      {
+        "id": "surface-f68633c5527bede8",
+        "label": "Candidate disposition: cand-http-xh-url-xss",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Validated candidate disposition",
+        "notes": "The href sink is target=_blank with rel=noopener noreferrer; source evidence does not establish script execution in the application document or origin.",
+        "candidateId": "cand-http-xh-url-xss",
+        "candidate": {
+          "title": "Unvalidated xHamster export URLs become executable links in the application origin",
+          "rule": "Validate URL schemes before placing source-file values in navigable DOM attributes",
+          "cwe": "CWE-79",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "A contributor or automation process able to influence the configured XH_FAVORITES JSON file",
+          "violated_security_invariant": "Metadata read from source files must not become active script in an admitted user's browser origin.",
+          "source_to_sink": "XH_FAVORITES defaults to a file beside SHARED_DIR. home() copies each item's url without type or scheme validation into /api/home. home.html HTML-escapes the string but places it directly in anchor href attributes, so javascript: remains active on click.",
+          "concrete_impact": "Same-origin script can read private APIs and issue same-origin mutations, including optional credential-backed Pornhub favorite actions.",
+          "locations": [
+            {
+              "path": "app/config.py",
+              "lines": "129-135"
+            },
+            {
+              "path": "app/index.py",
+              "lines": "917-950"
+            },
+            {
+              "path": "web/home.html",
+              "lines": "230-232"
+            },
+            {
+              "path": "web/home.html",
+              "lines": "258-265"
+            },
+            {
+              "path": "app/guards.py",
+              "lines": "36-41"
+            }
+          ],
+          "supporting_source_evidence": [
+            "app/index.py:937-944 copies it.get('url') directly into the API response.",
+            "web/home.html:231 and 263 emit it as href after HTML escaping only.",
+            "The response CSP contains only frame-ancestors."
+          ],
+          "counterevidence": [
+            "HTML escaping prevents attribute breakout.",
+            "Links use target=_blank and rel=noopener noreferrer.",
+            "Exploitation requires file influence and a user click."
+          ],
+          "recommended_remediation": "Require absolute HTTPS URLs on expected xHamster domains and render invalid values as text; add a restrictive script CSP."
+        }
+      },
+      {
+        "id": "surface-6536656ee27a9959",
+        "label": "Candidate disposition: cand-http-mlt-url-xss",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Validated candidate disposition",
+        "notes": "The href sink is target=_blank with rel=noopener; source evidence does not establish script execution in the application document or origin.",
+        "candidateId": "cand-http-mlt-url-xss",
+        "candidate": {
+          "title": "More-like-this pool URLs become executable links without scheme validation",
+          "rule": "Treat digger output as untrusted and validate every navigable URL",
+          "cwe": "CWE-79",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "A compromised or malicious digger/source process able to write MLT_POOL",
+          "violated_security_invariant": "Digger results must not execute script in the private browser origin.",
+          "source_to_sink": "read_mlt_pool returns configured JSON without URL validation; mlt_status passes p.url through, and showMltPicks places the escaped value directly in href, leaving javascript: active on click.",
+          "concrete_impact": "Same-origin script can read private APIs and perform file-backed or credential-backed mutations.",
+          "locations": [
+            {
+              "path": "app/store.py",
+              "lines": "551-554"
+            },
+            {
+              "path": "app/index.py",
+              "lines": "515-526"
+            },
+            {
+              "path": "app/api.py",
+              "lines": "373-378"
+            },
+            {
+              "path": "web/index.html",
+              "lines": "2315-2325"
+            },
+            {
+              "path": "app/guards.py",
+              "lines": "36-41"
+            }
+          ],
+          "supporting_source_evidence": [
+            "app/index.py:524 uses p.get('url') before the safe fallback.",
+            "web/index.html:2322 emits p.url into href after character escaping only.",
+            "MLT_POOL is produced by a separate digger process."
+          ],
+          "counterevidence": [
+            "Other fields are escaped and viewkeys are validated.",
+            "Exploitation requires pool influence and a user click."
+          ],
+          "recommended_remediation": "Require parsed HTTPS URLs on approved hosts and replace invalid values with page_url_of; recheck client-side."
+        }
+      },
+      {
+        "id": "surface-8d60fc2081cc4fc9",
+        "label": "Candidate disposition: cand-baseline-url-xss",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Validated candidate disposition",
+        "notes": "Duplicate of the two URL-scheme candidates; both affected anchors create disowned targets and do not establish application-origin script execution.",
+        "candidateId": "cand-baseline-url-xss",
+        "candidate": {
+          "title": "Unvalidated bot/export URLs create stored JavaScript-URL injection",
+          "cwe": "CWE-79",
+          "severity": "medium",
+          "confidence": "medium",
+          "attacker": "A malicious/compromised MLT digger, xHamster export producer, or principal influencing those JSON files.",
+          "security_invariant": "External integration links must use safe schemes and not execute in the application origin.",
+          "source_to_sink": "MLT pool and xHamster favorite url fields reach href after HTML character escaping but without scheme validation; CSP only restricts framing.",
+          "impact": "Clicked poisoned links can execute same-origin script, read private APIs, and invoke mutations.",
+          "locations": [
+            {
+              "path": "docs/shared-data-format.md",
+              "lines": "42-46"
+            },
+            {
+              "path": "app/index.py",
+              "lines": "512-526"
+            },
+            {
+              "path": "web/index.html",
+              "lines": "2315-2325"
+            },
+            {
+              "path": "app/index.py",
+              "lines": "916-944"
+            },
+            {
+              "path": "web/home.html",
+              "lines": "219-233"
+            },
+            {
+              "path": "web/home.html",
+              "lines": "258-265"
+            },
+            {
+              "path": "app/guards.py",
+              "lines": "36-41"
+            }
+          ],
+          "supporting_source_evidence": [
+            "Integration url fields are verbatim.",
+            "esc does not validate schemes.",
+            "No script-src CSP."
+          ],
+          "counterevidence": [
+            "Visible strings are escaped.",
+            "Click required.",
+            "noopener/noreferrer does not neutralize active schemes."
+          ],
+          "recommended_remediation": "Require HTTPS on expected public hosts; replace invalid URLs and add nonced/hashed CSP."
+        }
+      },
+      {
+        "id": "surface-19b5324743436e89",
+        "label": "Candidate disposition: cand-ingestion-mlt-url-xss",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Validated candidate disposition",
+        "notes": "Duplicate of cand-http-mlt-url-xss; target=_blank plus noopener defeats the claimed same-origin execution path.",
+        "candidateId": "cand-ingestion-mlt-url-xss",
+        "candidate": {
+          "title": "More-like-this result URLs become executable stored links",
+          "rule": "Validate navigable URL schemes and hosts",
+          "cwe": "CWE-79",
+          "severity": "medium",
+          "confidence": "medium",
+          "attacker": "A digger or local process able to write MLT_POOL.",
+          "source_to_sink": "MLT_POOL p.url is copied through mlt_status into an href after HTML escaping but without URL-scheme validation.",
+          "concrete_impact": "A clicked script-capable link may execute in a browser context and access application APIs if browser URL handling preserves the origin.",
+          "locations": [
+            {
+              "path": "app/store.py",
+              "lines": "551-554"
+            },
+            {
+              "path": "app/index.py",
+              "lines": "490-526"
+            },
+            {
+              "path": "app/api.py",
+              "lines": "373-378"
+            },
+            {
+              "path": "web/index.html",
+              "lines": "2319-2325"
+            }
+          ],
+          "counterevidence": [
+            "User click required.",
+            "target=_blank and rel=noopener may affect javascript: execution/origin and require validation."
+          ],
+          "recommended_remediation": "Allow only parsed http/https URLs, preferably the expected per-site host."
+        }
+      },
+      {
+        "id": "surface-a5587c7040b1a875",
+        "label": "Candidate disposition: cand-ingestion-xh-url-xss",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Validated candidate disposition",
+        "notes": "Duplicate of cand-http-xh-url-xss; target=_blank plus noopener/noreferrer defeats the claimed same-origin execution path.",
+        "candidateId": "cand-ingestion-xh-url-xss",
+        "candidate": {
+          "title": "xHamster favorites URLs are rendered as unvalidated executable links",
+          "rule": "Validate navigable URL schemes and hosts",
+          "cwe": "CWE-79",
+          "severity": "medium",
+          "confidence": "medium",
+          "attacker": "A local export/scout process able to write XH_FAVORITES.",
+          "source_to_sink": "home copies favorite url values unchanged; home.html HTML-escapes but inserts them into target=_blank href attributes.",
+          "concrete_impact": "A poisoned link may execute script when clicked if browser URL handling preserves an application origin.",
+          "locations": [
+            {
+              "path": "app/config.py",
+              "lines": "129-135"
+            },
+            {
+              "path": "app/index.py",
+              "lines": "916-950"
+            },
+            {
+              "path": "app/api.py",
+              "lines": "256-262"
+            },
+            {
+              "path": "web/home.html",
+              "lines": "219-233, 258-265"
+            },
+            {
+              "path": "deploy/box.env",
+              "lines": "6-10, 19-20"
+            }
+          ],
+          "counterevidence": [
+            "User click required.",
+            "target=_blank and noopener/noreferrer may prevent the claimed same-origin execution.",
+            "Producer may be fully trusted."
+          ],
+          "recommended_remediation": "Accept only parsed HTTPS URLs on approved xHamster hosts."
+        }
+      },
+      {
+        "id": "surface-d1b8886d90bd4675",
+        "label": "Candidate disposition: cand-baseline-docker-unauth",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Validated candidate disposition",
+        "notes": "Docker binds loopback by default, and the documented remote mode intentionally authorizes configured network peers; README.md:169-174 warns against unauthenticated Internet exposure.",
+        "candidateId": "cand-baseline-docker-unauth",
+        "candidate": {
+          "title": "Documented Docker remote mode exposes sensitive APIs without authentication",
+          "cwe": "CWE-306",
+          "severity": "high",
+          "confidence": "high",
+          "attacker": "An unauthenticated LAN peer or remote peer presented from an allowed bridge/private address after PUBLISH_ADDR=0.0.0.0.",
+          "security_invariant": "Only explicitly authenticated principals may read private data or invoke sensitive operations.",
+          "source_to_sink": "Compose allowlists broad bridge/private ranges because Docker rewrites source addresses; documentation permits 0.0.0.0 publication; middleware checks only source IP and caller Host, while direct clients can forge matching Origin and reach all APIs.",
+          "impact": "Remote peer can read private adult-viewing state, mutate ratings/highlights, trigger downloads, and use configured Pornhub favorite authority.",
+          "locations": [
+            {
+              "path": "docker-compose.yml",
+              "lines": "16-23"
+            },
+            {
+              "path": "docker-compose.yml",
+              "lines": "25-30"
+            },
+            {
+              "path": "README.md",
+              "lines": "42-45"
+            },
+            {
+              "path": "app/guards.py",
+              "lines": "24-35"
+            },
+            {
+              "path": "app/guards.py",
+              "lines": "43-53"
+            },
+            {
+              "path": "app/api.py",
+              "lines": "119-136"
+            },
+            {
+              "path": "app/api.py",
+              "lines": "627-670"
+            },
+            {
+              "path": "app/api.py",
+              "lines": "677-716"
+            }
+          ],
+          "supporting_source_evidence": [
+            "Compose explicitly allows RFC1918 bridge/private ranges.",
+            "README permits 0.0.0.0 for remote use.",
+            "Guards do not authenticate identity.",
+            "Direct clients can supply Content-Type/Origin/Host."
+          ],
+          "counterevidence": [
+            "Default publication is loopback.",
+            "Binding exact Tailscale address narrows exposure.",
+            "Host/Origin controls protect browser request integrity but not direct-client authentication."
+          ],
+          "recommended_remediation": "Keep loopback/specific tailnet binding, remove broad ranges, use authenticated proxy/Tailscale Serve, and authenticate all private/sensitive APIs."
+        }
+      },
+      {
+        "id": "surface-2094317231028d62",
+        "label": "Candidate disposition: cand-egress-full-ssrf",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Duplicate candidate reconciliation",
+        "notes": "This candidate is a duplicate operation of the validated source-metadata SSRF root control and is merged into that finding rather than counted separately.",
+        "candidateId": "cand-egress-full-ssrf",
+        "candidate": {
+          "title": "Namespaced clip metadata can turn the full-video proxy into an SSRF response oracle",
+          "rule": "Only site-owned, publicly routable media URLs may reach yt-dlp or the streaming proxy.",
+          "cwe": "CWE-918",
+          "severity": "high",
+          "confidence": "high",
+          "attacker": "An actor able to alter source JSON for a known namespaced clip and induce an admitted client to resolve it.",
+          "violated_security_invariant": "Read-only source metadata must not select arbitrary server-side network destinations or expose their responses.",
+          "source_to_sink": "build_index copies source_url/url; ph_page_url selects it; page_url_of accepts any https:// string; resolve_full gives it to yt-dlp; extracted HTTP(S) URLs are accepted by protocol only; /media/full opens and streams the result without host/address/redirect checks.",
+          "concrete_impact": "Server can connect to HTTPS services on loopback/private/link-local networks and may relay media bytes or expose timing/error behavior.",
+          "locations": [
+            {
+              "path": "app/index.py",
+              "lines": "3-40"
+            },
+            {
+              "path": "app/index.py",
+              "lines": "291-295"
+            },
+            {
+              "path": "app/store.py",
+              "lines": "38-48"
+            },
+            {
+              "path": "app/clips.py",
+              "lines": "577-629"
+            },
+            {
+              "path": "app/clips.py",
+              "lines": "1213-1267"
+            },
+            {
+              "path": "app/api.py",
+              "lines": "340-350"
+            },
+            {
+              "path": "app/api.py",
+              "lines": "405-426"
+            },
+            {
+              "path": "app/phnet.py",
+              "lines": "68-88"
+            }
+          ],
+          "supporting_source_evidence": [
+            "Only startswith('https://') constrains metadata URLs.",
+            "Extracted format host/address/redirect relation is not checked.",
+            "full_plan opens f.url and full_chunks relays its body."
+          ],
+          "counterevidence": [
+            "Limited to known namespaced clips.",
+            "HTTP triggers require admitted clients.",
+            "Useful exfiltration generally requires a target yt-dlp recognizes as media.",
+            "No shell injection."
+          ],
+          "recommended_remediation": "Derive canonical per-site URLs or enforce per-site host and public-address allowlists before every yt-dlp/urllib/ffmpeg request and after redirects."
+        }
+      },
+      {
+        "id": "surface-07e3f04f6c9363dd",
+        "label": "Candidate disposition: cand-egress-download-ssrf",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Duplicate candidate reconciliation",
+        "notes": "The unchecked-destination dataflow is merged into the validated source-metadata SSRF finding. Its separate no-quota observation does not establish a distinct authority gain: downloads are an admitted-client operation with one global active-job cap, so it remains hardening guidance.",
+        "candidateId": "cand-egress-download-ssrf",
+        "candidate": {
+          "title": "Namespaced download jobs fetch arbitrary metadata-selected URLs and have no size or wall-clock quota",
+          "rule": "Download jobs must use validated site URLs and bounded resource budgets.",
+          "cwe": "CWE-918",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "An admitted HTTP client acting on a namespaced clip with attacker-selected source metadata.",
+          "violated_security_invariant": "A download request must not access unintended destinations or consume unbounded storage.",
+          "source_to_sink": "The arbitrary metadata URL is the final yt-dlp operand and its output is persisted; one-job concurrency exists but there is no filesize, quota, or total process deadline.",
+          "concrete_impact": "Internal requests and persistent media writes; large or indefinite responses can fill DOWNLOAD_ROOT or monopolize downloads.",
+          "locations": [
+            {
+              "path": "app/store.py",
+              "lines": "38-48"
+            },
+            {
+              "path": "app/clips.py",
+              "lines": "158-265"
+            },
+            {
+              "path": "app/clips.py",
+              "lines": "267-312"
+            },
+            {
+              "path": "app/api.py",
+              "lines": "660-674"
+            }
+          ],
+          "supporting_source_evidence": [
+            "Non-walled URLs route directly.",
+            "stdout loop can remain active indefinitely.",
+            "No filesize/duration/disk quota."
+          ],
+          "counterevidence": [
+            "One active download.",
+            "Destination and filenames are confined.",
+            "Completed downloads are not served by this code.",
+            "No shell."
+          ],
+          "recommended_remediation": "Validate destinations and add filesize, duration, subprocess, free-space, and aggregate-root quotas."
+        }
+      },
+      {
+        "id": "surface-1c4f6ce4ca6abee4",
+        "label": "Candidate disposition: cand-egress-ffmpeg-ssrf",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Duplicate candidate reconciliation",
+        "notes": "This candidate is a duplicate operation of the validated source-metadata SSRF root control and is merged into that finding rather than counted separately.",
+        "candidateId": "cand-egress-ffmpeg-ssrf",
+        "candidate": {
+          "title": "Extracted HLS and progressive URLs reach ffmpeg without egress validation",
+          "rule": "Media URLs handed to native decoders must pass the same destination policy as initial URLs.",
+          "cwe": "CWE-918",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "An actor controlling namespaced source metadata or its extraction page.",
+          "violated_security_invariant": "Native processing must not connect to arbitrary destinations selected by metadata.",
+          "source_to_sink": "resolve_full retains unchecked progressive/HLS URLs from yt-dlp; user_frame and _extract_frames pass them to ffmpeg; playlist, redirect, segment host and addresses are not checked.",
+          "concrete_impact": "Internal playlists, segments, or media may be fetched and decodable content converted to browser-visible JPEGs.",
+          "locations": [
+            {
+              "path": "app/clips.py",
+              "lines": "577-629"
+            },
+            {
+              "path": "app/clips.py",
+              "lines": "927-956"
+            },
+            {
+              "path": "app/clips.py",
+              "lines": "1068-1138"
+            },
+            {
+              "path": "app/api.py",
+              "lines": "495-536"
+            },
+            {
+              "path": "app/phnet.py",
+              "lines": "79-81"
+            }
+          ],
+          "supporting_source_evidence": [
+            "HLS selection checks protocol text only.",
+            "ffmpeg receives f.url directly.",
+            "Timeouts do not prevent unintended egress."
+          ],
+          "counterevidence": [
+            "Fixed argv with timeout.",
+            "Only known clips.",
+            "Exfiltration limited to decodable frames."
+          ],
+          "recommended_remediation": "Enforce expected public destinations for playlists, redirects, and segments through a policy proxy."
+        }
+      },
+      {
+        "id": "surface-c8dbf347bd7ee9a9",
+        "label": "Candidate disposition: cand-baseline-ssrf",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Duplicate candidate reconciliation",
+        "notes": "This candidate is a duplicate operation of the validated source-metadata SSRF root control and is merged into that finding rather than counted separately.",
+        "candidateId": "cand-baseline-ssrf",
+        "candidate": {
+          "title": "Scout-controlled source URLs are dereferenced without SSRF-safe egress validation",
+          "cwe": "CWE-918",
+          "severity": "medium",
+          "confidence": "medium",
+          "attacker": "A malicious/compromised scout or attacker poisoning SOURCES_DIR metadata for a namespaced clip.",
+          "security_invariant": "Metadata integrations must not cause arbitrary internal or non-approved network requests.",
+          "source_to_sink": "Index copies source_url/url, page_url_of accepts any https:// text, ph_page_url returns it, yt-dlp follows it and emits further URLs, and full_plan opens the emitted URL without destination validation.",
+          "impact": "Internal probing and possible retrieval/streaming of internal resources plus bandwidth abuse.",
+          "locations": [
+            {
+              "path": "app/index.py",
+              "lines": "35-40"
+            },
+            {
+              "path": "app/index.py",
+              "lines": "95-114"
+            },
+            {
+              "path": "app/index.py",
+              "lines": "291-302"
+            },
+            {
+              "path": "app/store.py",
+              "lines": "38-48"
+            },
+            {
+              "path": "app/clips.py",
+              "lines": "188-203"
+            },
+            {
+              "path": "app/clips.py",
+              "lines": "592-600"
+            },
+            {
+              "path": "app/clips.py",
+              "lines": "1218-1237"
+            }
+          ],
+          "supporting_source_evidence": [
+            "Recursive JSON ingestion retains URLs.",
+            "startswith https is the entire decision.",
+            "yt-dlp and urllib dereference unchecked destinations."
+          ],
+          "counterevidence": [
+            "Known clip required.",
+            "Ordinary HTTP clients cannot set source_url.",
+            "Initial URL must begin https.",
+            "Pornhub uses fixed URL."
+          ],
+          "recommended_remediation": "Canonicalize per-site URLs or strictly validate hostname, port, resolved address, redirects, and every extracted URL; add egress firewall."
+        }
+      },
+      {
+        "id": "surface-0d5e9b35d95ad969",
+        "label": "Candidate disposition: cand-egress-preview-thread-dos",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Duplicate candidate reconciliation",
+        "notes": "This operation shares the validated unbounded request-triggered raw-thread control failure and bounded-executor remediation; it is merged into that finding rather than counted separately.",
+        "candidateId": "cand-egress-preview-thread-dos",
+        "candidate": {
+          "title": "Uncached preview requests create an unbounded number of background threads",
+          "rule": "Expensive background work must be deduplicated and use a bounded executor.",
+          "cwe": "CWE-770",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "Any admitted HTTP client with a known clip ID.",
+          "violated_security_invariant": "A client must not allocate unbounded threads by repeating a pending preview.",
+          "source_to_sink": "fetch=False lacks an in-flight marker; api_preview calls prefetch_preview, which creates a raw Thread for every request; the per-viewkey lock then makes duplicates wait.",
+          "concrete_impact": "Thousands of waiting threads can exhaust memory/scheduler/process limits.",
+          "locations": [
+            {
+              "path": "app/api.py",
+              "lines": "310-325"
+            },
+            {
+              "path": "app/clips.py",
+              "lines": "431-482"
+            },
+            {
+              "path": "app/clips.py",
+              "lines": "484-485"
+            }
+          ],
+          "supporting_source_evidence": [
+            "No queue, executor, pending set, or limit.",
+            "fetch=False cannot distinguish pending.",
+            "Network timeouts make accumulation practical."
+          ],
+          "counterevidence": [
+            "Per-key lock serializes actual fetch.",
+            "Byte/time limits exist.",
+            "Requires admitted client and known clip."
+          ],
+          "recommended_remediation": "Single-flight Future per key plus bounded executor/queue and throttling."
+        }
+      },
+      {
+        "id": "surface-65b19939d2d64a1e",
+        "label": "Candidate disposition: cand-http-queue-thread-dos",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Duplicate candidate reconciliation",
+        "notes": "This operation shares the validated unbounded request-triggered raw-thread control failure and bounded-executor remediation; it is merged into that finding rather than counted separately.",
+        "candidateId": "cand-http-queue-thread-dos",
+        "candidate": {
+          "title": "Queue and home reads spawn unbounded sweep threads and duplicate uncached upstream lookups",
+          "rule": "Coalesce cache misses and cap request-triggered background sweeps",
+          "cwe": "CWE-400",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "An HTTP client admitted by ALLOWED_NETS",
+          "violated_security_invariant": "Read endpoints must not amplify requests into unbounded local threads and upstream work.",
+          "source_to_sink": "Both /api/queue and /api/home call queue(); when activity data is uncached queue starts one raw thread per request for up to 30 clips. clip_info has no per-viewkey in-flight lock, so concurrent sweeps duplicate remote API calls.",
+          "concrete_impact": "Cold-cache request bursts can create unbounded threads and duplicate upstream traffic, denying service.",
+          "locations": [
+            {
+              "path": "app/api.py",
+              "lines": "249-262"
+            },
+            {
+              "path": "app/index.py",
+              "lines": "778-818"
+            },
+            {
+              "path": "app/index.py",
+              "lines": "842-844"
+            },
+            {
+              "path": "app/clips.py",
+              "lines": "331-371"
+            }
+          ],
+          "supporting_source_evidence": [
+            "app/index.py:813-818 starts a raw thread per request.",
+            "app/clips.py:333-355 releases the dictionary lock before duplicate network lookups."
+          ],
+          "counterevidence": [
+            "Each sweep is capped at 30 clips and warm results are cached.",
+            "Attacker must be an admitted client."
+          ],
+          "recommended_remediation": "Use a bounded shared executor, a global pending-viewkey set, per-viewkey single-flight, and endpoint throttling."
+        }
+      },
+      {
+        "id": "surface-d980dc41d9c25de2",
+        "label": "Candidate disposition: cand-egress-mlt-thread-dos",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Duplicate candidate reconciliation",
+        "notes": "This operation shares the validated unbounded request-triggered raw-thread control failure and bounded-executor remediation; it is merged into that finding rather than counted separately.",
+        "candidateId": "cand-egress-mlt-thread-dos",
+        "candidate": {
+          "title": "Repeated MLT requests spawn unbounded authenticated webhook threads",
+          "rule": "Webhook delivery must be queued, deduplicated, and concurrency-bounded.",
+          "cwe": "CWE-770",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "Any admitted HTTP client when MLT webhook URL/key are configured.",
+          "violated_security_invariant": "A shared client must not create unbounded threads or flood an authenticated downstream endpoint.",
+          "source_to_sink": "Each on=true POST can create a wake and new raw daemon thread; open entries are not deduplicated for delivery; each thread blocks up to eight seconds and sends both credentials.",
+          "concrete_impact": "Local thread/socket exhaustion and authenticated downstream request floods.",
+          "locations": [
+            {
+              "path": "app/api.py",
+              "lines": "610-624"
+            },
+            {
+              "path": "app/store.py",
+              "lines": "499-513"
+            },
+            {
+              "path": "app/store.py",
+              "lines": "515-542"
+            }
+          ],
+          "supporting_source_evidence": [
+            "Already-open entries still create wakes.",
+            "One thread per accepted request.",
+            "State lock does not bound deliveries."
+          ],
+          "counterevidence": [
+            "Feature optional.",
+            "POST guarded and known clip required.",
+            "Key not disclosed."
+          ],
+          "recommended_remediation": "Bound/coalesce delivery queue, idempotency/resend interval, backoff, queue cap, and client rate limits."
+        }
+      },
+      {
+        "id": "surface-5fcd0571ae2a83a5",
+        "label": "Candidate disposition: cand-deploy-state-restore",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Duplicate candidate reconciliation",
+        "notes": "The untrusted restore direction shares the same box-user-writable Tailscale persistence boundary and root-owned-storage remediation as the validated node-state exposure finding. It is merged there rather than counted separately; no archive-based root code execution was established.",
+        "candidateId": "cand-deploy-state-restore",
+        "candidate": {
+          "title": "User-writable Tailscale state is restored into the root daemon without authenticity protection",
+          "cwe": "CWE-345",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "A malicious process running as the box account that can replace state.tgz before reset.",
+          "violated_security_invariant": "Only root-trusted state may determine the privileged daemon's identity and network membership.",
+          "source_to_sink_explanation": "A nonempty user-writable state.tgz is sudo-extracted into /var/lib/tailscale, chowned root, and used by root tailscaled with no integrity or identity check.",
+          "concrete_impact": "A same-user attacker can cause the privileged daemon to adopt an attacker-selected valid identity after reset, potentially changing service reachability.",
+          "locations": [
+            {
+              "path": "scripts/ensure-up.sh",
+              "line": 81
+            },
+            {
+              "path": "scripts/ensure-up.sh",
+              "line": 139
+            },
+            {
+              "path": "scripts/ensure-up.sh",
+              "line": 140
+            },
+            {
+              "path": "scripts/ensure-up.sh",
+              "line": 143
+            },
+            {
+              "path": "scripts/ensure-up.sh",
+              "line": 154
+            },
+            {
+              "path": "app/config.py",
+              "line": 74
+            },
+            {
+              "path": "app/config.py",
+              "line": 77
+            },
+            {
+              "path": "app/guards.py",
+              "line": 14
+            },
+            {
+              "path": "app/guards.py",
+              "line": 19
+            }
+          ],
+          "supporting_source_evidence": [
+            "Archive can restore a complete node identity without login.",
+            "The app has no login and relies on network/Host checks.",
+            "Reset recovery is an expected workflow."
+          ],
+          "counterevidence": [
+            "Requires same-account execution, a valid replacement state, and later recovery.",
+            "Reachability depends on external ACLs.",
+            "0700 excludes unrelated Unix users."
+          ],
+          "recommended_remediation": "Move backups to root-owned authenticated storage and validate expected machine identity before daemon start."
+        }
+      },
+      {
+        "id": "surface-2a8ee5b19143d47e",
+        "label": "Candidate disposition: cand-ingestion-dated-name-dos",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Duplicate candidate reconciliation",
+        "notes": "The malformed-filename rebuild abort is one manifestation of the validated source-scanner validation and per-file isolation failure and is merged into that finding rather than counted separately.",
+        "candidateId": "cand-ingestion-dated-name-dos",
+        "candidate": {
+          "title": "Malformed dated-list filenames abort the complete index rebuild",
+          "rule": "Validate filename matches before capture access and isolate file failures",
+          "cwe": "CWE-20",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "A writer able to add a JSON file under SOURCES_DIR.",
+          "source_to_sink": "Broad globs match filenames whose narrower date regex returns no match; unchecked .group() aborts build_index.",
+          "concrete_impact": "A tiny malformed file prevents fresh index construction or leaves an existing index stale.",
+          "locations": [
+            {
+              "path": "app/index.py",
+              "lines": "64-77, 157-181"
+            },
+            {
+              "path": "app/server.py",
+              "lines": "72-79"
+            }
+          ],
+          "counterevidence": [
+            "The application process remains running.",
+            "An existing cache remains usable but stale."
+          ],
+          "recommended_remediation": "Check regex matches and skip malformed files inside per-file exception boundaries."
+        }
+      },
+      {
+        "id": "surface-d4b4e50c6d9c7bde",
+        "label": "Candidate disposition: cand-ingestion-html-name-dos",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "riskArea": "Duplicate candidate reconciliation",
+        "notes": "The malformed-filename rebuild abort is one manifestation of the validated source-scanner validation and per-file isolation failure and is merged into that finding rather than counted separately.",
+        "candidateId": "cand-ingestion-html-name-dos",
+        "candidate": {
+          "title": "Malformed saved-page filenames abort the complete index rebuild",
+          "rule": "Validate filename matches before capture access and isolate file failures",
+          "cwe": "CWE-20",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "A writer able to add a saved HTML page under SOURCES_DIR.",
+          "source_to_sink": "Broad HTML globs accept names rejected by the viewkey regex; unchecked group(1) outside the per-file try block aborts build_index.",
+          "concrete_impact": "A tiny malformed saved-page name prevents all index refreshes.",
+          "locations": [
+            {
+              "path": "app/index.py",
+              "lines": "116-124, 157-181"
+            }
+          ],
+          "counterevidence": [
+            "An existing cache remains usable but stale."
+          ],
+          "recommended_remediation": "Validate basenames and skip malformed files inside per-file exception boundaries."
+        }
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "deferred-b41d5bcc7b518425",
+        "reason": "Independent baseline audit returned candidates that are preserved below and await parent validation.",
+        "paths": [
+          "."
+        ]
+      },
+      {
+        "id": "deferred-70fa113fa57ff073",
+        "reason": "HTTP/browser review returned candidates that are preserved below and await parent validation.",
+        "paths": [
+          "app/api.py",
+          "app/guards.py",
+          "web"
+        ]
+      },
+      {
+        "id": "deferred-d85a15203c88e994",
+        "reason": "Filesystem/egress review returned candidates that are preserved below and await parent validation.",
+        "paths": [
+          "app/clips.py",
+          "app/store.py",
+          "app/phnet.py",
+          "app/config.py"
+        ]
+      },
+      {
+        "id": "deferred-90f3faa4facad1c2",
+        "reason": "Deployment/script review returned candidates that are preserved below and await parent validation; data-ingestion review is still running.",
+        "paths": [
+          "app/index.py",
+          "scripts",
+          "deploy",
+          "tests",
+          "docs"
+        ]
+      },
+      {
+        "id": "cand-ingestion-quadratic-dups",
+        "candidateId": "cand-ingestion-quadratic-dups",
+        "reason": "Worker candidate awaiting one independent parent source validation.",
+        "paths": [
+          "app/index.py",
+          "app/api.py"
+        ],
+        "candidate": {
+          "title": "Unbounded quadratic duplicate matching runs on every queue and home request",
+          "rule": "Bound request-path comparison work",
+          "cwe": "CWE-407",
+          "severity": "medium",
+          "confidence": "medium",
+          "attacker": "A scout or automation process able to add many entries and titles to sent-log.json and already-sent.json.",
+          "source_to_sink": "suppress_tonight_dups performs nested SequenceMatcher comparisons over unbounded titles and collections for every queue/home computation.",
+          "concrete_impact": "Adversarial equal-length titles and repeated requests can consume CPU and worker capacity.",
+          "locations": [
+            {
+              "path": "app/index.py",
+              "lines": "392-470, 778-788, 842-845"
+            },
+            {
+              "path": "app/api.py",
+              "lines": "249-262"
+            }
+          ],
+          "counterevidence": [
+            "Length-difference checks reject some comparisons.",
+            "Intended deployment is small/self-hosted."
+          ],
+          "recommended_remediation": "Bound titles and records, index/fingerprint candidates, cache results, and enforce a comparison budget."
+        }
+      }
+    ],
+    "openQuestions": [
+      {
+        "question": "Can less-trusted automation write SOURCES_DIR, MLT_POOL, or xHamster export files in supported deployments?"
+      },
+      {
+        "question": "Does the live box account have only narrowly scoped passwordless sudo, or unrestricted root authority?"
+      },
+      {
+        "question": "Are optional webhook/cookie features enabled in a multi-client deployment?"
+      },
+      {
+        "question": "Which returned availability observations remain material after accounting for the intentionally trusted admitted-client boundary?"
+      },
+      {
+        "question": "Can less-trusted automation write SOURCES_DIR or shared digger/scout files in supported deployments?"
+      },
+      {
+        "question": "Are PH_COOKIES_FILE or MLT_WEBHOOK_URL/MLT_WEBHOOK_KEY enabled in a deployment reachable by more than one trusted user?"
+      },
+      {
+        "question": "Does any supported HTTPS reverse proxy preserve or rewrite Origin/Host in a way that changes the POST same-origin control?"
+      },
+      {
+        "question": "Are all SOURCES_DIR writers equally trusted as the application operator, or can a less-trusted scout/digger write matching files?"
+      },
+      {
+        "question": "Does target=_blank browser handling permit the claimed javascript: URL execution in supported clients?"
+      }
+    ]
+  }
+}

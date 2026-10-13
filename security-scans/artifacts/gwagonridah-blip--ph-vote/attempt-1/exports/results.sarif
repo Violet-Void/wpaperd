@@ -1,0 +1,1412 @@
+{
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "automationDetails": {
+        "id": "bdee8bf1-1977-4dd3-af3a-ea2d503003ca"
+      },
+      "properties": {
+        "codexSecuritySchemaVersion": "1.0",
+        "codexSecurityTargetKind": "git_revision"
+      },
+      "results": [
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "message": {
+                "text": "root_control"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 130,
+                  "startLine": 95
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "unbounded_parser"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/store.py"
+                },
+                "region": {
+                  "endLine": 71,
+                  "startLine": 66
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "filename_abort"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 77,
+                  "startLine": 64
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "availability_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 176,
+                  "startLine": 157
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "startup_effect"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/server.py"
+                },
+                "region": {
+                  "endLine": 79,
+                  "startLine": 72
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:recursive-path-open"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 115,
+                  "startLine": 95
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:unbounded-html-read"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 124,
+                  "startLine": 116
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Malformed or non-regular source files can stall or abort the entire index rebuild\n\nThe recursive source scanner opens every matching JSON or saved HTML path without verifying a regular no-follow file, enforcing byte or aggregate limits, or isolating all per-file parsing failures. A source writer can block the rebuild with a FIFO/device or exhaust memory with a large file. Separately, broad glob patterns feed narrower unchecked filename regexes, so a tiny malformed JSON or HTML filename raises before the local error handling and aborts the whole build.\n\nSeverity: medium\n\nCategory: Unbounded and non isolated file backed source ingestion\n\nWeaknesses: CWE-400, CWE-20\n\nRemediation:\nFor each candidate path, use lstat/open-no-follow semantics and accept only regular files whose resolved/opened identity remains beneath SOURCES_DIR. Enforce per-file and aggregate byte, record, nesting, string-length, and processing-time budgets before parsing. Validate basenames with fullmatch and check every match before accessing groups. Put all filename parsing and file processing inside a per-file exception boundary so one bad source is skipped and logged. Consider a resource-limited worker for source parsing and commit only a complete validated snapshot.\n\nRemediation tests:\n- Add glob-matching JSON filenames without ISO dates and assert they are skipped while valid sources still build.\n- Add saved-page filenames with uppercase/punctuation outside the viewkey grammar and assert the rebuild succeeds.\n- Add a file symlink escaping SOURCES_DIR and a FIFO/special-file fixture; assert the scanner rejects them without opening.\n- Add oversized JSON and HTML fixtures and assert byte/aggregate limits fail fast without replacing the last good index.\n- Verify a malformed file cannot keep building true or block later valid refreshes.\n\nPreventive controls:\n- Centralize safe source-file opening and budget enforcement.\n- Use strict fullmatch filename grammars before opening files.\n- Run integration parsers with filesystem and resource isolation appropriate to their trust level."
+          },
+          "partialFingerprints": {
+            "codexSecurity/v1": "codex-security/v1:sha256:1eb9b62c7390e38c14cbef35562f8b80a5d1c70c6b401680df52f862526c6b5d"
+          },
+          "properties": {
+            "category": "Unbounded and non-isolated file-backed source ingestion",
+            "confidence": "high",
+            "findingId": "csf_f2bc4a32f214f7f5de7399e2",
+            "occurrenceId": "occ_06c2b2bf2206473774811435",
+            "severity": "medium"
+          },
+          "ruleId": "resource-exhaustion.unbounded-source-scan",
+          "ruleIndex": 6
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "message": {
+                "text": "root_control"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/store.py"
+                },
+                "region": {
+                  "endLine": 202,
+                  "startLine": 180
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "source"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/api.py"
+                },
+                "region": {
+                  "endLine": 704,
+                  "startLine": 701
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "propagation"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/store.py"
+                },
+                "region": {
+                  "endLine": 131,
+                  "startLine": 128
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "propagation"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 835,
+                  "startLine": 828
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "web/index.html"
+                },
+                "region": {
+                  "endLine": 2862,
+                  "startLine": 2850
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:normal-path-validates-note-time"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/store.py"
+                },
+                "region": {
+                  "endLine": 151,
+                  "startLine": 140
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:note-time-attribute-sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "web/index.html"
+                },
+                "region": {
+                  "endLine": 2860,
+                  "startLine": 2850
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Vote restore persists an unvalidated note timestamp into an HTML attribute\n\nAn admitted HTTP client can submit a crafted historical vote entry through the undo/restore branch. Unlike normal vote writes, restore_vote does not apply clean_notes, so an attacker-controlled note timestamp is stored and later interpolated without escaping into a data-t attribute in the My votes list. Rendering that list can execute injected markup in another admitted browser.\n\nSeverity: medium\n\nCategory: Stored browser injection caused by inconsistent nested restore validation\n\nWeaknesses: CWE-79\n\nRemediation:\nDo not accept a client-supplied vote entry as an undo token. Retain previous state server-side or issue an opaque, integrity-protected reference. If restore remains, reconstruct the entry from explicitly validated fields and run notes through clean_notes before persistence. In the browser, require finite numeric timestamps and create note elements with DOM APIs/textContent/dataset instead of HTML strings. A restrictive script-src CSP adds defense in depth after inline handlers are removed or nonced.\n\nRemediation tests:\n- POST a restore entry whose notes timestamp is a string containing a quote and active markup; expect HTTP 400 and confirm votes.json is unchanged.\n- Restore a valid historical entry and confirm notes are normalized exactly as in ordinary vote writes.\n- Render a stored malformed legacy note and assert no element or event-handler injection occurs.\n- Add an end-to-end two-client test: attacker submits the restore payload, victim opens My votes, and no script-visible sentinel changes.\n\nPreventive controls:\n- Use one server-side schema validator for new votes, reason edits, and restores.\n- Represent undo state by server-generated opaque identifiers rather than round-tripping trusted objects through the browser.\n- Build dynamic DOM with node APIs and enforce a script-src CSP."
+          },
+          "partialFingerprints": {
+            "codexSecurity/v1": "codex-security/v1:sha256:0a0d4e35335c8a4410bbc4e6ae729d9d463ca9e0697ebd16722e669755970688"
+          },
+          "properties": {
+            "category": "Stored browser injection caused by inconsistent nested restore validation",
+            "confidence": "high",
+            "findingId": "csf_d6741c107bc0a926a0dd872f",
+            "occurrenceId": "occ_22ae88f9daef5309b150deb2",
+            "severity": "medium"
+          },
+          "ruleId": "stored-xss.vote-restore-note-time",
+          "ruleIndex": 8
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "message": {
+                "text": "trust_boundary"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "scripts/ensure-up.sh"
+                },
+                "region": {
+                  "endLine": 81,
+                  "startLine": 71
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "integrity_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "scripts/ensure-up.sh"
+                },
+                "region": {
+                  "endLine": 145,
+                  "startLine": 138
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "confidentiality_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "scripts/ensure-up.sh"
+                },
+                "region": {
+                  "endLine": 173,
+                  "startLine": 165
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "impact_evidence"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "docs/live-switch.md"
+                },
+                "region": {
+                  "endLine": 79,
+                  "startLine": 72
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "deployment_configuration"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "deploy/box.env"
+                },
+                "region": {
+                  "endLine": 18,
+                  "startLine": 18
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Root Tailscale node state is downgraded to box-user-writable persistent storage\n\nThe live recovery script uses sudo to archive the root-owned Tailscale state directory, but shell redirection creates state.tgz in the unprivileged box account's persistence directory and chmods it 0600 for that account. The same user-controlled archive is later restored into /var/lib/tailscale without integrity or expected-identity verification. Compromise of the application account can therefore disclose reusable node identity material and can substitute a different valid state at the next reset.\n\nSeverity: medium\n\nCategory: Privileged credential material stored across a weaker local trust boundary\n\nWeaknesses: CWE-732\n\nRemediation:\nStore Tailscale state backups in a root-owned directory inaccessible to the application account, or encrypt them with a key unavailable to that account. Have a small root-owned recovery unit perform backup and restore without user-shell redirection. Authenticate every backup with a root-only MAC/signature and verify expected node/tailnet identity before daemon start. Keep package cache and state backups separate and apply least-privilege sudo.\n\nRemediation tests:\n- As the box account, assert state.tgz cannot be read, replaced, or deleted.\n- Replace or modify a copied backup and assert restore fails authenticity verification before extraction.\n- Restore an authentic backup and verify the resulting node/tailnet identity matches an expected pinned identity.\n- Audit archive creation ownership and mode immediately after a healthy backup; require root ownership and no app-account access.\n\nPreventive controls:\n- Keep privileged daemon credentials out of application-user storage.\n- Authenticate reset-survival artifacts before privileged restore.\n- Separate operational recovery into root-owned code and data with explicit identity checks."
+          },
+          "partialFingerprints": {
+            "codexSecurity/v1": "codex-security/v1:sha256:354e6e9f07ad18e5a60fce239de80508afc673bf06924da6238fb57754613e27"
+          },
+          "properties": {
+            "category": "Privileged credential material stored across a weaker local trust boundary",
+            "confidence": "medium",
+            "findingId": "csf_1143952237971d777a9e6152",
+            "occurrenceId": "occ_2a367d0bf2020bdc4560e210",
+            "severity": "medium"
+          },
+          "ruleId": "credential-exposure.user-owned-tailscale-state",
+          "ruleIndex": 1
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "message": {
+                "text": "root_control"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 470,
+                  "startLine": 422
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "costly_primitive"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 420,
+                  "startLine": 392
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "request_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 788,
+                  "startLine": 778
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "request_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 845,
+                  "startLine": 842
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "http_entrypoint"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/api.py"
+                },
+                "region": {
+                  "endLine": 262,
+                  "startLine": 249
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:unbounded-sequence-matcher"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 408,
+                  "startLine": 392
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Unbounded fuzzy duplicate matching performs quadratic work on every queue and home request\n\nsent-log titles and collection sizes are unbounded, and suppress_tonight_dups compares every unvoted current-round title against all previously kept titles and recent history using difflib.SequenceMatcher. The queue endpoint performs this from scratch for each request, and home calls queue internally. A source-data writer can supply many long, equal-length, nonmatching titles and make ordinary or repeated admitted requests consume superlinear CPU.\n\nSeverity: medium\n\nCategory: Algorithmic complexity denial of service in source driven request processing\n\nWeaknesses: CWE-407\n\nRemediation:\nCap accepted title length and current/recent record counts at ingestion. Precompute normalized titles when the index changes and cache suppression results by the sent-log/index version. Replace all-pairs SequenceMatcher with bounded candidate buckets or fingerprints, apply a strict comparison/time budget, and fall back to exact matching when exhausted. Perform expensive refresh work outside request handlers.\n\nRemediation tests:\n- Generate N unique equal-length adversarial titles and assert comparison count/time stays within a linear or explicitly bounded budget as N grows.\n- Send overlong titles and oversized rounds and assert they are truncated/rejected before fuzzy matching.\n- Call /api/queue and /api/home repeatedly without source changes and assert duplicate suppression is computed once per source version.\n- Exhaust the comparison budget and verify the endpoint returns promptly with a documented exact-match fallback.\n\nPreventive controls:\n- Budget source-controlled algorithmic work by records, bytes, comparisons, and time.\n- Cache source-derived computations outside request paths.\n- Use performance regression tests with adversarial, not only realistic, title distributions."
+          },
+          "partialFingerprints": {
+            "codexSecurity/v1": "codex-security/v1:sha256:c8bf490b10bb70a65170c2956f940d96dc5ef55b283d6784801acebcf0eebc02"
+          },
+          "properties": {
+            "category": "Algorithmic-complexity denial of service in source-driven request processing",
+            "confidence": "high",
+            "findingId": "csf_ca707fd8c4417d24fdea3485",
+            "occurrenceId": "occ_35c17de4632ee2fe77161515",
+            "severity": "medium"
+          },
+          "ruleId": "algorithmic-complexity.duplicate-title-matching",
+          "ruleIndex": 0
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "message": {
+                "text": "root_control"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "tests/parity/ui_queue_smoke.py"
+                },
+                "region": {
+                  "endLine": 104,
+                  "startLine": 92
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "security_expectation"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "tests/parity/README.md"
+                },
+                "region": {
+                  "endLine": 10,
+                  "startLine": 3
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "external_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "tests/parity/ui_queue_smoke.py"
+                },
+                "region": {
+                  "endLine": 49,
+                  "startLine": 48
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "external_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "tests/parity/ui_queue_smoke.py"
+                },
+                "region": {
+                  "endLine": 67,
+                  "startLine": 62
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "trigger"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "tests/parity/fake_ytdlp/yt_dlp/__main__.py"
+                },
+                "region": {
+                  "endLine": 8,
+                  "startLine": 5
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:deterministic-external-trigger"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "tests/parity/ui_queue_smoke.py"
+                },
+                "region": {
+                  "endLine": 100,
+                  "startLine": 92
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:sandbox-and-proxy-disabled"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "tests/parity/ui_queue_smoke.py"
+                },
+                "region": {
+                  "endLine": 104,
+                  "startLine": 101
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "The UI smoke test renders live third-party content with Chromium's sandbox disabled\n\ntests/parity/ui_queue_smoke.py deliberately drives an unfetchable clip into a live Pornhub embed while launching Chromium with both --no-sandbox and --no-proxy-server. This contradicts the harness's offline isolation claim and exposes the developer or CI account to live third-party browser content without Chromium's normal process sandbox.\n\nSeverity: medium\n\nCategory: Developer tool isolation failure for untrusted browser content\n\nWeaknesses: CWE-693\n\nRemediation:\nRemove --no-sandbox for developer-host execution. Block all non-loopback browser egress and replace the third-party embed with a local stub or CDP request interception. If the browser sandbox cannot run in the target environment, execute this test inside a dedicated unprivileged container or VM with no secrets, no sensitive writable mounts, and no Internet access.\n\nRemediation tests:\n- Run the smoke test with outbound requests logged or intercepted and assert every destination is loopback.\n- Assert the launched Chromium command does not contain --no-sandbox on ordinary developer hosts.\n- Make the failed-media embed point at a local stub and preserve the existing fallback assertions.\n- In the isolated fallback environment, verify no credentials or host workspace mounts are present.\n\nPreventive controls:\n- Treat browser tests as untrusted-content execution and require sandboxing or stronger outer isolation.\n- Make offline-test network policy fail closed instead of relying on application proxy settings.\n- Keep live third-party URLs out of deterministic regression fixtures."
+          },
+          "partialFingerprints": {
+            "codexSecurity/v1": "codex-security/v1:sha256:76ca509b9a8eafb7e22b58e29a25e4a3eeb84541405c9d38356a6a89ce07cb41"
+          },
+          "properties": {
+            "category": "Developer-tool isolation failure for untrusted browser content",
+            "confidence": "high",
+            "findingId": "csf_6965343bd114f8acd03e48e6",
+            "occurrenceId": "occ_38d80e1f41776c55fa2f12ed",
+            "severity": "medium"
+          },
+          "ruleId": "unsafe-browser-test.unsandboxed-external-embed",
+          "ruleIndex": 9
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "message": {
+                "text": "root_control"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/clips.py"
+                },
+                "region": {
+                  "endLine": 1267,
+                  "startLine": 1213
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "resource_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/clips.py"
+                },
+                "region": {
+                  "endLine": 1279,
+                  "startLine": 1269
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "http_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/api.py"
+                },
+                "region": {
+                  "endLine": 414,
+                  "startLine": 405
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:synthetic-range-threshold"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/clips.py"
+                },
+                "region": {
+                  "endLine": 1261,
+                  "startLine": 1245
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Synthetic range fallback amplifies a one-byte request into up to 32 MiB of upstream reads\n\nWhen an upstream media server ignores Range and returns 200 with a numeric Content-Length, full_plan synthesizes a 206 response for offsets through 32 MiB. full_chunks implements this by reading and discarding every byte before the requested offset. An admitted client can repeatedly request one byte near the threshold and force roughly 32 MiB of hidden server-side bandwidth and blocking work per response.\n\nSeverity: low\n\nCategory: Asymmetric server side bandwidth amplification\n\nWeaknesses: CWE-400\n\nRemediation:\nDo not synthesize nonzero ranges by linear discard. If upstream ignores a range, return an honest 200, reject the seek with 416/502, or use a bounded local cache designed for random access. If a small fallback is retained, reduce the threshold substantially and enforce global/per-client concurrent-stream and total-upstream-byte budgets based on bytes consumed, not bytes returned.\n\nRemediation tests:\n- Use a fake upstream that ignores Range; request one byte at the maximum allowed offset and assert the server does not read the prefix.\n- Verify unsupported nonzero ranges return the documented honest response without hidden discard.\n- Issue concurrent range requests and assert a global stream/byte budget caps upstream consumption.\n- Confirm normal upstream 206 pass-through remains seekable and preserves Content-Range.\n\nPreventive controls:\n- Account for upstream bytes separately from downstream response size.\n- Bound concurrent full-media streams per client and globally.\n- Prefer upstream-supported ranges or local random-access storage over discard-based emulation."
+          },
+          "partialFingerprints": {
+            "codexSecurity/v1": "codex-security/v1:sha256:44c39bf48bc8afe94f778a034a34a3f03e1dd4f70b52fd56cf9c76ac3b034cda"
+          },
+          "properties": {
+            "category": "Asymmetric server-side bandwidth amplification",
+            "confidence": "high",
+            "findingId": "csf_30984c3642c6412ccce1eb54",
+            "occurrenceId": "occ_434879efa1423ca2e5b9298b",
+            "severity": "low"
+          },
+          "ruleId": "resource-amplification.synthetic-range-skip",
+          "ruleIndex": 4
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "message": {
+                "text": "preview_entrypoint"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/api.py"
+                },
+                "region": {
+                  "endLine": 325,
+                  "startLine": 310
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "preview_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/clips.py"
+                },
+                "region": {
+                  "endLine": 485,
+                  "startLine": 431
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "queue_entrypoint"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/api.py"
+                },
+                "region": {
+                  "endLine": 262,
+                  "startLine": 249
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "queue_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 818,
+                  "startLine": 813
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "webhook_entrypoint"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/api.py"
+                },
+                "region": {
+                  "endLine": 624,
+                  "startLine": 610
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "webhook_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/store.py"
+                },
+                "region": {
+                  "endLine": 542,
+                  "startLine": 515
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:preview-thread-per-miss"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/api.py"
+                },
+                "region": {
+                  "endLine": 323,
+                  "startLine": 310
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:preview-lock-inside-thread"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/clips.py"
+                },
+                "region": {
+                  "endLine": 485,
+                  "startLine": 439
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Admitted clients can create unbounded background threads on preview, queue, and webhook paths\n\nSeveral HTTP-triggered operations start raw daemon threads without a shared executor, queue cap, rate limit, or pending-work coalescing. Repeated uncached preview requests create duplicate workers that block behind a per-viewkey lock, queue/home reads start duplicate 30-clip sweeps, and an enabled MLT webhook starts a new credentialed delivery thread for each repeated request. An admitted client can exhaust process threads, memory, sockets, and upstream capacity.\n\nSeverity: medium\n\nCategory: Uncontrolled request triggered background concurrency\n\nWeaknesses: CWE-770\n\nRemediation:\nRoute preview fetches, clip-info sweeps, and webhook deliveries through small bounded executors or queues with explicit capacity. Maintain per-viewkey pending Futures/single-flight state before worker creation, deduplicate queue sweep keys globally, coalesce repeated MLT wakes, and reject or drop work when capacity is full. Add per-client throttles and downstream delivery backoff/idempotency.\n\nRemediation tests:\n- Hold a preview fetch open, issue hundreds of duplicate /api/preview requests, and assert only one worker exists for that viewkey and total worker count stays bounded.\n- Issue concurrent cold /api/queue and /api/home requests and assert every viewkey is fetched once with a capped global queue.\n- With a slow fake webhook, repeat POST /api/mlt and assert delivery is coalesced and thread count remains fixed.\n- Fill the executor/queue and verify excess requests fail or degrade predictably without creating threads.\n\nPreventive controls:\n- Use the existing PREWARM_POOL plus pending-set pattern for all asynchronous media work.\n- Centralize background-job capacity, metrics, and cancellation.\n- Apply endpoint concurrency/rate limits at the application or authenticating reverse proxy."
+          },
+          "partialFingerprints": {
+            "codexSecurity/v1": "codex-security/v1:sha256:937f91cfd610547e29fce0b0af3089e39bab2d03e30d2a0a8fa67adb49dceb4d"
+          },
+          "properties": {
+            "category": "Uncontrolled request-triggered background concurrency",
+            "confidence": "high",
+            "findingId": "csf_0a043897078e988c050ccef9",
+            "occurrenceId": "occ_58e4a008eb7cfd94aa133dd5",
+            "severity": "medium"
+          },
+          "ruleId": "resource-exhaustion.unbounded-request-threads",
+          "ruleIndex": 5
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "message": {
+                "text": "root_control"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/store.py"
+                },
+                "region": {
+                  "endLine": 48,
+                  "startLine": 38
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "source"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 40,
+                  "startLine": 35
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "propagation"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 302,
+                  "startLine": 291
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "extractor_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/clips.py"
+                },
+                "region": {
+                  "endLine": 629,
+                  "startLine": 577
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "response_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/clips.py"
+                },
+                "region": {
+                  "endLine": 1267,
+                  "startLine": 1213
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "native_media_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/clips.py"
+                },
+                "region": {
+                  "endLine": 956,
+                  "startLine": 927
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "persistent_download_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/clips.py"
+                },
+                "region": {
+                  "endLine": 203,
+                  "startLine": 158
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "egress_control"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/phnet.py"
+                },
+                "region": {
+                  "endLine": 103,
+                  "startLine": 68
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:ytdlp-and-format-trust"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/clips.py"
+                },
+                "region": {
+                  "endLine": 623,
+                  "startLine": 592
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:full-stream-response-sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/clips.py"
+                },
+                "region": {
+                  "endLine": 1237,
+                  "startLine": 1221
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:unknown-hosts-go-direct"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/phnet.py"
+                },
+                "region": {
+                  "endLine": 88,
+                  "startLine": 68
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Namespaced clip metadata controls server-side media destinations without egress validation\n\nFor xh: and ep: clips, recursively ingested source_url or url fields become the canonical page URL when they merely start with https://. The application passes that value to yt-dlp, accepts the extractor's HTTP(S) format and playlist URLs without host or address validation, and then fetches them through the full-video proxy, ffmpeg frame extraction, or persistent download path. A source-data writer can therefore induce server-side requests to unintended destinations; automatic preview prewarming supplies a trigger when a poisoned card is displayed.\n\nSeverity: medium\n\nCategory: Server side request forgery through unvalidated integration metadata\n\nWeaknesses: CWE-918\n\nRemediation:\nSeparate display links from trusted server-fetch targets. Construct fetch URLs from validated site plus native identifier wherever possible. When a slug is required, parse the URL and require the exact documented site host or properly delimited site suffix and expected port. Resolve DNS and reject loopback, link-local, private, multicast, and other non-public addresses; repeat validation after every redirect and for every extractor-returned playlist, segment, or format URL. Add network-level egress controls as defense in depth, and rebuild cached indexes after deployment.\n\nRemediation tests:\n- Ingest xh:/ep: records whose URLs target loopback, link-local, RFC1918, IPv6 local, credentials-in-authority, alternate ports, and deceptive suffixes; assert media operations reject them before network access.\n- Test an allowed public source that redirects to a private address; assert every redirect hop is revalidated.\n- Return an allowed extraction page with a private progressive URL and HLS playlist/segment; assert urllib and ffmpeg never receive them.\n- Confirm canonical xHamster and Eporner hosts continue to resolve and legitimate CDN formats remain usable.\n\nPreventive controls:\n- Use a single reusable egress-policy component for urllib, yt-dlp results, redirects, ffmpeg, and downloads.\n- Keep browser navigation URLs distinct from server-fetch URLs in the data model.\n- Apply an outbound firewall that blocks metadata and private address ranges for the application account/container."
+          },
+          "partialFingerprints": {
+            "codexSecurity/v1": "codex-security/v1:sha256:7ff61fe6175482f04b2b125667a61ff61f4b3d2d5bd7d7ac40cd523dd1d31003"
+          },
+          "properties": {
+            "category": "Server-side request forgery through unvalidated integration metadata",
+            "confidence": "high",
+            "findingId": "csf_63a1eaa3333db3a75c0993ef",
+            "occurrenceId": "occ_992b450a39e642a8460c3e44",
+            "severity": "medium"
+          },
+          "ruleId": "ssrf.source-metadata-media-resolution",
+          "ruleIndex": 7
+        },
+        {
+          "level": "error",
+          "locations": [
+            {
+              "message": {
+                "text": "root_control"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "scripts/ensure-up.sh"
+                },
+                "region": {
+                  "endLine": 81,
+                  "startLine": 71
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "source"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "deploy/box.env"
+                },
+                "region": {
+                  "endLine": 18,
+                  "startLine": 18
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "privileged_install_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "scripts/ensure-up.sh"
+                },
+                "region": {
+                  "endLine": 114,
+                  "startLine": 93
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "trigger"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "scripts/ensure-up.sh"
+                },
+                "region": {
+                  "endLine": 121,
+                  "startLine": 118
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "execution_sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "scripts/ensure-up.sh"
+                },
+                "region": {
+                  "endLine": 155,
+                  "startLine": 150
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "deployment_reachability"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "docs/live-switch.md"
+                },
+                "region": {
+                  "endLine": 79,
+                  "startLine": 72
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:newest-deb-privileged-install"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "scripts/ensure-up.sh"
+                },
+                "region": {
+                  "endLine": 104,
+                  "startLine": 93
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:extracted-binaries-installed-root"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "scripts/ensure-up.sh"
+                },
+                "region": {
+                  "endLine": 110,
+                  "startLine": 104
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "A box-user-writable cached package is installed and executed as root during reset recovery\n\nscripts/ensure-up.sh trusts the newest filename-matching Tailscale .deb under a directory owned by the unprivileged box account. When a reset removes the system binaries, the recurring recovery workflow installs that local package with sudo apt-get or extracts its binaries and sudo-installs them, then starts tailscaled under sudo. A process that compromises the box account can plant a crafted package and gain root execution at the next recovery.\n\nSeverity: high\n\nCategory: Untrusted user writable code crosses a privileged recovery boundary\n\nWeaknesses: CWE-494\n\nRemediation:\nMove cached packages and recovery state to a root-owned directory that the service/box account cannot modify. Pin an expected Tailscale version and verify the package's repository signature or an operator-pinned cryptographic digest before any privileged consumption. Remove the unauthenticated extraction/install fallback. Make the privileged component fetch or copy verified artifacts itself, and narrowly scope sudo to a root-owned wrapper that accepts no user-controlled paths.\n\nRemediation tests:\n- As the box account, place a newer filename-matching .deb in the persistence directory and assert recovery refuses it before any sudo operation.\n- Modify one byte of the approved cached package and assert digest/signature verification fails closed.\n- Verify the privileged package directory and every parent are root-owned and not group/world/user writable by the app account.\n- Exercise offline reset recovery with the pinned authentic package and confirm it still succeeds.\n\nPreventive controls:\n- Separate unprivileged application persistence from root recovery artifacts.\n- Verify provenance and integrity immediately before privileged installation or execution.\n- Audit sudoers and external scheduler configuration so a writable script/account cannot broaden privileged commands."
+          },
+          "partialFingerprints": {
+            "codexSecurity/v1": "codex-security/v1:sha256:f0c6ed1c700746f7dcd6fe49fd0fa03314bf51cf2f5fb09f5dff6f22e7bc3cde"
+          },
+          "properties": {
+            "category": "Untrusted user-writable code crosses a privileged recovery boundary",
+            "confidence": "medium",
+            "findingId": "csf_8c404b76c04d7cbac89bc31e",
+            "occurrenceId": "occ_cc3715651d2eb7238d5a5ad1",
+            "severity": "high"
+          },
+          "ruleId": "privilege-escalation.untrusted-tailscale-package",
+          "ruleIndex": 2
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "message": {
+                "text": "root_control"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 7,
+                  "startLine": 3
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "propagation"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/index.py"
+                },
+                "region": {
+                  "endLine": 820,
+                  "startLine": 804
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "propagation"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "web/index.html"
+                },
+                "region": {
+                  "endLine": 1756,
+                  "startLine": 1738
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "source"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "web/index.html"
+                },
+                "region": {
+                  "endLine": 1857,
+                  "startLine": 1849
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "sink"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "web/index.html"
+                },
+                "region": {
+                  "endLine": 3067,
+                  "startLine": 3050
+                }
+              }
+            },
+            {
+              "message": {
+                "text": "evidence:embed-marks-source-key"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "web/index.html"
+                },
+                "region": {
+                  "endLine": 1856,
+                  "startLine": 1849
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "An unvalidated clip identifier pollutes Object.prototype in browser watch state\n\nThe index admits arbitrary string identifiers from already-sent.json, including __proto__, and returns them in queue items. When an invalid item reaches the normal media fallback, wpMark uses the identifier as a key in a plain object. WATCH['__proto__'] resolves Object.prototype, so the fixed watch-state fields are written to the global prototype and inherited by unrelated clip entries.\n\nSeverity: low\n\nCategory: Client side prototype pollution through an unvalidated object key\n\nWeaknesses: CWE-1321\n\nRemediation:\nValidate every clip identifier with VK_RE while ingesting already-sent and sent-log data, dropping and logging invalid values before index construction. Independently represent WATCH with Map or Object.create(null), validate the parsed localStorage object, and use Object.hasOwn before reusing a keyed record.\n\nRemediation tests:\n- Add __proto__, constructor, and prototype entries to an ingestion fixture; assert none appear in /api/queue.\n- Call wpMark('__proto__','e') in watched_test.js and assert Object.prototype has no new e or t property.\n- Verify an unrelated identifier receives no inherited badge after malicious-key input.\n- Exercise valid bare, xh:, and ep: identifiers to prevent an over-restrictive fix.\n\nPreventive controls:\n- Centralize canonical identifier validation at every file-ingestion boundary.\n- Use Map or prototype-free dictionaries for attacker-influenced keys.\n- Include JavaScript special-property keys in keyed-state regression tests."
+          },
+          "partialFingerprints": {
+            "codexSecurity/v1": "codex-security/v1:sha256:663dd14420e44b417eeba1bc3a83cc9b088217b950c6d5feaad2ec47a1ac7230"
+          },
+          "properties": {
+            "category": "Client-side prototype pollution through an unvalidated object key",
+            "confidence": "high",
+            "findingId": "csf_4e1abf3867121679b0692c3c",
+            "occurrenceId": "occ_f0e209bdf0d74e6e5e268058",
+            "severity": "low"
+          },
+          "ruleId": "prototype-pollution.watch-state-viewkey",
+          "ruleIndex": 3
+        }
+      ],
+      "tool": {
+        "driver": {
+          "name": "Codex Security",
+          "rules": [
+            {
+              "fullDescription": {
+                "text": "Algorithmic complexity: Duplicate title matching. Categories: Algorithmic complexity denial of service in source driven request processing. Weaknesses: CWE-407."
+              },
+              "help": {
+                "markdown": "Algorithmic complexity: Duplicate title matching. Categories: Algorithmic complexity denial of service in source driven request processing. Weaknesses: CWE-407.\n\n## Remediation\n\nCap accepted title length and current/recent record counts at ingestion. Precompute normalized titles when the index changes and cache suppression results by the sent-log/index version. Replace all-pairs SequenceMatcher with bounded candidate buckets or fingerprints, apply a strict comparison/time budget, and fall back to exact matching when exhausted. Perform expensive refresh work outside request handlers.",
+                "text": "Algorithmic complexity: Duplicate title matching. Categories: Algorithmic complexity denial of service in source driven request processing. Weaknesses: CWE-407.\n\nRemediation:\n\nCap accepted title length and current/recent record counts at ingestion. Precompute normalized titles when the index changes and cache suppression results by the sent-log/index version. Replace all-pairs SequenceMatcher with bounded candidate buckets or fingerprints, apply a strict comparison/time budget, and fall back to exact matching when exhausted. Perform expensive refresh work outside request handlers."
+              },
+              "id": "algorithmic-complexity.duplicate-title-matching",
+              "name": "Algorithmic complexity: Duplicate title matching",
+              "properties": {
+                "security-severity": "5",
+                "tags": [
+                  "Algorithmic-complexity denial of service in source-driven request processing",
+                  "external/cwe/cwe-407",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Algorithmic complexity: Duplicate title matching"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Credential exposure: User owned tailscale state. Categories: Privileged credential material stored across a weaker local trust boundary. Weaknesses: CWE-732."
+              },
+              "help": {
+                "markdown": "Credential exposure: User owned tailscale state. Categories: Privileged credential material stored across a weaker local trust boundary. Weaknesses: CWE-732.\n\n## Remediation\n\nStore Tailscale state backups in a root-owned directory inaccessible to the application account, or encrypt them with a key unavailable to that account. Have a small root-owned recovery unit perform backup and restore without user-shell redirection. Authenticate every backup with a root-only MAC/signature and verify expected node/tailnet identity before daemon start. Keep package cache and state backups separate and apply least-privilege sudo.",
+                "text": "Credential exposure: User owned tailscale state. Categories: Privileged credential material stored across a weaker local trust boundary. Weaknesses: CWE-732.\n\nRemediation:\n\nStore Tailscale state backups in a root-owned directory inaccessible to the application account, or encrypt them with a key unavailable to that account. Have a small root-owned recovery unit perform backup and restore without user-shell redirection. Authenticate every backup with a root-only MAC/signature and verify expected node/tailnet identity before daemon start. Keep package cache and state backups separate and apply least-privilege sudo."
+              },
+              "id": "credential-exposure.user-owned-tailscale-state",
+              "name": "Credential exposure: User owned tailscale state",
+              "properties": {
+                "security-severity": "6.2",
+                "tags": [
+                  "Privileged credential material stored across a weaker local trust boundary",
+                  "external/cwe/cwe-732",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Credential exposure: User owned tailscale state"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Privilege escalation: Untrusted tailscale package. Categories: Untrusted user writable code crosses a privileged recovery boundary. Weaknesses: CWE-494."
+              },
+              "help": {
+                "markdown": "Privilege escalation: Untrusted tailscale package. Categories: Untrusted user writable code crosses a privileged recovery boundary. Weaknesses: CWE-494.\n\n## Remediation\n\nMove cached packages and recovery state to a root-owned directory that the service/box account cannot modify. Pin an expected Tailscale version and verify the package's repository signature or an operator-pinned cryptographic digest before any privileged consumption. Remove the unauthenticated extraction/install fallback. Make the privileged component fetch or copy verified artifacts itself, and narrowly scope sudo to a root-owned wrapper that accepts no user-controlled paths.",
+                "text": "Privilege escalation: Untrusted tailscale package. Categories: Untrusted user writable code crosses a privileged recovery boundary. Weaknesses: CWE-494.\n\nRemediation:\n\nMove cached packages and recovery state to a root-owned directory that the service/box account cannot modify. Pin an expected Tailscale version and verify the package's repository signature or an operator-pinned cryptographic digest before any privileged consumption. Remove the unauthenticated extraction/install fallback. Make the privileged component fetch or copy verified artifacts itself, and narrowly scope sudo to a root-owned wrapper that accepts no user-controlled paths."
+              },
+              "id": "privilege-escalation.untrusted-tailscale-package",
+              "name": "Privilege escalation: Untrusted tailscale package",
+              "properties": {
+                "security-severity": "8.1",
+                "tags": [
+                  "Untrusted user-writable code crosses a privileged recovery boundary",
+                  "external/cwe/cwe-494",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Privilege escalation: Untrusted tailscale package"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Prototype pollution: Watch state viewkey. Categories: Client side prototype pollution through an unvalidated object key. Weaknesses: CWE-1321."
+              },
+              "help": {
+                "markdown": "Prototype pollution: Watch state viewkey. Categories: Client side prototype pollution through an unvalidated object key. Weaknesses: CWE-1321.\n\n## Remediation\n\nValidate every clip identifier with VK_RE while ingesting already-sent and sent-log data, dropping and logging invalid values before index construction. Independently represent WATCH with Map or Object.create(null), validate the parsed localStorage object, and use Object.hasOwn before reusing a keyed record.",
+                "text": "Prototype pollution: Watch state viewkey. Categories: Client side prototype pollution through an unvalidated object key. Weaknesses: CWE-1321.\n\nRemediation:\n\nValidate every clip identifier with VK_RE while ingesting already-sent and sent-log data, dropping and logging invalid values before index construction. Independently represent WATCH with Map or Object.create(null), validate the parsed localStorage object, and use Object.hasOwn before reusing a keyed record."
+              },
+              "id": "prototype-pollution.watch-state-viewkey",
+              "name": "Prototype pollution: Watch state viewkey",
+              "properties": {
+                "security-severity": "3.3",
+                "tags": [
+                  "Client-side prototype pollution through an unvalidated object key",
+                  "external/cwe/cwe-1321",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Prototype pollution: Watch state viewkey"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Resource amplification: Synthetic range skip. Categories: Asymmetric server side bandwidth amplification. Weaknesses: CWE-400."
+              },
+              "help": {
+                "markdown": "Resource amplification: Synthetic range skip. Categories: Asymmetric server side bandwidth amplification. Weaknesses: CWE-400.\n\n## Remediation\n\nDo not synthesize nonzero ranges by linear discard. If upstream ignores a range, return an honest 200, reject the seek with 416/502, or use a bounded local cache designed for random access. If a small fallback is retained, reduce the threshold substantially and enforce global/per-client concurrent-stream and total-upstream-byte budgets based on bytes consumed, not bytes returned.",
+                "text": "Resource amplification: Synthetic range skip. Categories: Asymmetric server side bandwidth amplification. Weaknesses: CWE-400.\n\nRemediation:\n\nDo not synthesize nonzero ranges by linear discard. If upstream ignores a range, return an honest 200, reject the seek with 416/502, or use a bounded local cache designed for random access. If a small fallback is retained, reduce the threshold substantially and enforce global/per-client concurrent-stream and total-upstream-byte budgets based on bytes consumed, not bytes returned."
+              },
+              "id": "resource-amplification.synthetic-range-skip",
+              "name": "Resource amplification: Synthetic range skip",
+              "properties": {
+                "security-severity": "3.7",
+                "tags": [
+                  "Asymmetric server-side bandwidth amplification",
+                  "external/cwe/cwe-400",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Resource amplification: Synthetic range skip"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Resource exhaustion: Unbounded request threads. Categories: Uncontrolled request triggered background concurrency. Weaknesses: CWE-770."
+              },
+              "help": {
+                "markdown": "Resource exhaustion: Unbounded request threads. Categories: Uncontrolled request triggered background concurrency. Weaknesses: CWE-770.\n\n## Remediation\n\nRoute preview fetches, clip-info sweeps, and webhook deliveries through small bounded executors or queues with explicit capacity. Maintain per-viewkey pending Futures/single-flight state before worker creation, deduplicate queue sweep keys globally, coalesce repeated MLT wakes, and reject or drop work when capacity is full. Add per-client throttles and downstream delivery backoff/idempotency.",
+                "text": "Resource exhaustion: Unbounded request threads. Categories: Uncontrolled request triggered background concurrency. Weaknesses: CWE-770.\n\nRemediation:\n\nRoute preview fetches, clip-info sweeps, and webhook deliveries through small bounded executors or queues with explicit capacity. Maintain per-viewkey pending Futures/single-flight state before worker creation, deduplicate queue sweep keys globally, coalesce repeated MLT wakes, and reject or drop work when capacity is full. Add per-client throttles and downstream delivery backoff/idempotency."
+              },
+              "id": "resource-exhaustion.unbounded-request-threads",
+              "name": "Resource exhaustion: Unbounded request threads",
+              "properties": {
+                "security-severity": "5.9",
+                "tags": [
+                  "Uncontrolled request-triggered background concurrency",
+                  "external/cwe/cwe-770",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Resource exhaustion: Unbounded request threads"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Resource exhaustion: Unbounded source scan. Categories: Unbounded and non isolated file backed source ingestion. Weaknesses: CWE-20, CWE-400."
+              },
+              "help": {
+                "markdown": "Resource exhaustion: Unbounded source scan. Categories: Unbounded and non isolated file backed source ingestion. Weaknesses: CWE-20, CWE-400.\n\n## Remediation\n\nFor each candidate path, use lstat/open-no-follow semantics and accept only regular files whose resolved/opened identity remains beneath SOURCES_DIR. Enforce per-file and aggregate byte, record, nesting, string-length, and processing-time budgets before parsing. Validate basenames with fullmatch and check every match before accessing groups. Put all filename parsing and file processing inside a per-file exception boundary so one bad source is skipped and logged. Consider a resource-limited worker for source parsing and commit only a complete validated snapshot.",
+                "text": "Resource exhaustion: Unbounded source scan. Categories: Unbounded and non isolated file backed source ingestion. Weaknesses: CWE-20, CWE-400.\n\nRemediation:\n\nFor each candidate path, use lstat/open-no-follow semantics and accept only regular files whose resolved/opened identity remains beneath SOURCES_DIR. Enforce per-file and aggregate byte, record, nesting, string-length, and processing-time budgets before parsing. Validate basenames with fullmatch and check every match before accessing groups. Put all filename parsing and file processing inside a per-file exception boundary so one bad source is skipped and logged. Consider a resource-limited worker for source parsing and commit only a complete validated snapshot."
+              },
+              "id": "resource-exhaustion.unbounded-source-scan",
+              "name": "Resource exhaustion: Unbounded source scan",
+              "properties": {
+                "security-severity": "5.6",
+                "tags": [
+                  "Unbounded and non-isolated file-backed source ingestion",
+                  "external/cwe/cwe-020",
+                  "external/cwe/cwe-400",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Resource exhaustion: Unbounded source scan"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "SSRF: Source metadata media resolution. Categories: Server side request forgery through unvalidated integration metadata. Weaknesses: CWE-918."
+              },
+              "help": {
+                "markdown": "SSRF: Source metadata media resolution. Categories: Server side request forgery through unvalidated integration metadata. Weaknesses: CWE-918.\n\n## Remediation\n\nSeparate display links from trusted server-fetch targets. Construct fetch URLs from validated site plus native identifier wherever possible. When a slug is required, parse the URL and require the exact documented site host or properly delimited site suffix and expected port. Resolve DNS and reject loopback, link-local, private, multicast, and other non-public addresses; repeat validation after every redirect and for every extractor-returned playlist, segment, or format URL. Add network-level egress controls as defense in depth, and rebuild cached indexes after deployment.",
+                "text": "SSRF: Source metadata media resolution. Categories: Server side request forgery through unvalidated integration metadata. Weaknesses: CWE-918.\n\nRemediation:\n\nSeparate display links from trusted server-fetch targets. Construct fetch URLs from validated site plus native identifier wherever possible. When a slug is required, parse the URL and require the exact documented site host or properly delimited site suffix and expected port. Resolve DNS and reject loopback, link-local, private, multicast, and other non-public addresses; repeat validation after every redirect and for every extractor-returned playlist, segment, or format URL. Add network-level egress controls as defense in depth, and rebuild cached indexes after deployment."
+              },
+              "id": "ssrf.source-metadata-media-resolution",
+              "name": "SSRF: Source metadata media resolution",
+              "properties": {
+                "security-severity": "6.4",
+                "tags": [
+                  "Server-side request forgery through unvalidated integration metadata",
+                  "external/cwe/cwe-918",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "SSRF: Source metadata media resolution"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Stored XSS: Vote restore note time. Categories: Stored browser injection caused by inconsistent nested restore validation. Weaknesses: CWE-79."
+              },
+              "help": {
+                "markdown": "Stored XSS: Vote restore note time. Categories: Stored browser injection caused by inconsistent nested restore validation. Weaknesses: CWE-79.\n\n## Remediation\n\nDo not accept a client-supplied vote entry as an undo token. Retain previous state server-side or issue an opaque, integrity-protected reference. If restore remains, reconstruct the entry from explicitly validated fields and run notes through clean_notes before persistence. In the browser, require finite numeric timestamps and create note elements with DOM APIs/textContent/dataset instead of HTML strings. A restrictive script-src CSP adds defense in depth after inline handlers are removed or nonced.",
+                "text": "Stored XSS: Vote restore note time. Categories: Stored browser injection caused by inconsistent nested restore validation. Weaknesses: CWE-79.\n\nRemediation:\n\nDo not accept a client-supplied vote entry as an undo token. Retain previous state server-side or issue an opaque, integrity-protected reference. If restore remains, reconstruct the entry from explicitly validated fields and run notes through clean_notes before persistence. In the browser, require finite numeric timestamps and create note elements with DOM APIs/textContent/dataset instead of HTML strings. A restrictive script-src CSP adds defense in depth after inline handlers are removed or nonced."
+              },
+              "id": "stored-xss.vote-restore-note-time",
+              "name": "Stored XSS: Vote restore note time",
+              "properties": {
+                "security-severity": "6.1",
+                "tags": [
+                  "Stored browser injection caused by inconsistent nested restore validation",
+                  "external/cwe/cwe-079",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Stored XSS: Vote restore note time"
+              }
+            },
+            {
+              "fullDescription": {
+                "text": "Unsafe browser test: Unsandboxed external embed. Categories: Developer tool isolation failure for untrusted browser content. Weaknesses: CWE-693."
+              },
+              "help": {
+                "markdown": "Unsafe browser test: Unsandboxed external embed. Categories: Developer tool isolation failure for untrusted browser content. Weaknesses: CWE-693.\n\n## Remediation\n\nRemove --no-sandbox for developer-host execution. Block all non-loopback browser egress and replace the third-party embed with a local stub or CDP request interception. If the browser sandbox cannot run in the target environment, execute this test inside a dedicated unprivileged container or VM with no secrets, no sensitive writable mounts, and no Internet access.",
+                "text": "Unsafe browser test: Unsandboxed external embed. Categories: Developer tool isolation failure for untrusted browser content. Weaknesses: CWE-693.\n\nRemediation:\n\nRemove --no-sandbox for developer-host execution. Block all non-loopback browser egress and replace the third-party embed with a local stub or CDP request interception. If the browser sandbox cannot run in the target environment, execute this test inside a dedicated unprivileged container or VM with no secrets, no sensitive writable mounts, and no Internet access."
+              },
+              "id": "unsafe-browser-test.unsandboxed-external-embed",
+              "name": "Unsafe browser test: Unsandboxed external embed",
+              "properties": {
+                "security-severity": "5.3",
+                "tags": [
+                  "Developer-tool isolation failure for untrusted browser content",
+                  "external/cwe/cwe-693",
+                  "security"
+                ]
+              },
+              "shortDescription": {
+                "text": "Unsafe browser test: Unsandboxed external embed"
+              }
+            }
+          ],
+          "version": "0.1.95"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

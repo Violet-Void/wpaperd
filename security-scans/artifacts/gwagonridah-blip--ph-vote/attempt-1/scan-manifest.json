@@ -1,0 +1,138 @@
+{
+  "documentType": "codex-security.scan-manifest",
+  "scan": {
+    "artifacts": [
+      {
+        "mediaType": "application/json",
+        "path": "findings.json",
+        "sha256": "948cf722868754d076de2391fdbdea89420286566e7e5bcb170f7931776c323b"
+      },
+      {
+        "mediaType": "application/json",
+        "path": "coverage.json",
+        "sha256": "94d89f1031a1cdf6df8d3d579bdbb6095c548da79e103ceaf4225f0e6396fede"
+      }
+    ],
+    "completedAt": "2026-10-13T01:50:44.768160Z",
+    "coverageRef": "coverage.json",
+    "findingsRef": "findings.json",
+    "id": "bdee8bf1-1977-4dd3-af3a-ea2d503003ca",
+    "preservedSources": {
+      "checkpoint-heads/98038a6c9b184973e75543249fc19a2f7c3e212addf128dbcb12d696e6f055be.json": "98038a6c9b184973e75543249fc19a2f7c3e212addf128dbcb12d696e6f055be",
+      "checkpoints/0c241bd66b6b15ee45ff0fb7fb44984d44c3bf574c37ab6475e85b31b7872ed1.json": "1b1358fafb3282f5b62e978a09c8e7e5d82bf1a8a81edcb8df8e86a8891864ec",
+      "checkpoints/16047277b317080b2825759303970465c92da24baa30edf577eb761f9ba93a32.json": "16047277b317080b2825759303970465c92da24baa30edf577eb761f9ba93a32",
+      "checkpoints/16e4018b987394a21a8e38c8e1ce0890788479941666422ab9253dd417b36dc9.json": "16e4018b987394a21a8e38c8e1ce0890788479941666422ab9253dd417b36dc9",
+      "checkpoints/183bf955936003efe97fd64ea94e386e5a33ec81c5ac303340bc2bd2f3f244ec.json": "82d8107f0ee4dbf5cba8788039129f7182cafe1b2262f4eb0de9506222b1c92b",
+      "checkpoints/1c022385410bbace0fec27a7e6949e641dd4ff0eb9c7119bbaaae1f6ec5bc0ba.json": "1c022385410bbace0fec27a7e6949e641dd4ff0eb9c7119bbaaae1f6ec5bc0ba",
+      "checkpoints/21fd074f09245c76bfee9beb7ba95391b8d539b4beecc3d4ffb2d5e99e2a8b49.json": "21fd074f09245c76bfee9beb7ba95391b8d539b4beecc3d4ffb2d5e99e2a8b49",
+      "checkpoints/26d753b7f6a1f302e3f05db925bd742716a3563d1e0baf0c05e285f8866baad9.json": "cc8cc08b03da6dd36818890317e22ce2964794fdef7b6e4390da9b248bff9fb5",
+      "checkpoints/3bc3eafa08a9a340a04f910d5cc6a75eb3fc91fe4dce68f72ea6d49ec6417bb0.json": "86f15d5f25e3442c915f288e81c6e955aaf36d4283b5d390960e0e24663573fd",
+      "checkpoints/3e3467ba744f8fb91d4744eddf4b9c71529c61d855f78c9d49cb6d666e3d429e.json": "3e3467ba744f8fb91d4744eddf4b9c71529c61d855f78c9d49cb6d666e3d429e",
+      "checkpoints/55bc8698f244766c4091967c27061e26f95b29275af6b0f30e2bd7f09de00595.json": "55bc8698f244766c4091967c27061e26f95b29275af6b0f30e2bd7f09de00595",
+      "checkpoints/634817adaaa0dbd6cdf21cea38425f1cb64f221cf63f4a10c8b574d207206849.json": "6f09bd2fdd90cf75eb083d5f9ca7a1c31bbe29d867f7b42bcbff95caec756b43",
+      "checkpoints/67d71d6140766879b4bf96b2115556eca429bd49a3dfd925cc2a50856141a227.json": "67d71d6140766879b4bf96b2115556eca429bd49a3dfd925cc2a50856141a227",
+      "checkpoints/7d32641dcaf4c71accdc338dc1ba7a4d8ca792ef65e2bc3d94647935a0608ca6.json": "7d32641dcaf4c71accdc338dc1ba7a4d8ca792ef65e2bc3d94647935a0608ca6",
+      "checkpoints/88c573be56b337e68ba56fcd96ef0c37733a59347cf0aa51b05bb70130c6a5dd.json": "5c28baf9ecae6e1f28023f4c109604c95de12fae9b64f07d0b8a8d4d62544580",
+      "checkpoints/920633b6f320e87790569d608e13de937db45e94befd3c944874adcf869ad000.json": "920633b6f320e87790569d608e13de937db45e94befd3c944874adcf869ad000",
+      "checkpoints/9d73091499a7339cf485581243299a21913ca9ce3ee595cf30ff3450d8e54180.json": "9d73091499a7339cf485581243299a21913ca9ce3ee595cf30ff3450d8e54180",
+      "checkpoints/9d8c8d9eb7a7de772baf8f86a60612d5703543000907ab5b5e457167ae4bfb51.json": "d0ec0f4a4fbc9d79d70413d11d078538479f7373dc1652199453aab0374a7732",
+      "checkpoints/a5f991fba54c83616e71ada17f568c8d7f1fab45ab4740a60784ca58ad8faec5.json": "a5f991fba54c83616e71ada17f568c8d7f1fab45ab4740a60784ca58ad8faec5",
+      "checkpoints/aad42aca9c94086f939889f3c4d9c79d9cacbca2a388a9824e7ccde8b3c3736f.json": "aad42aca9c94086f939889f3c4d9c79d9cacbca2a388a9824e7ccde8b3c3736f",
+      "checkpoints/b2781e20ae6ba6ee87cf661bcfdb0cbd89e0643667def542a8ab2decd2a09fed.json": "6e7a274f202a84a995898039625d4669166a8b7f5a3129cd5dda8901655250bd",
+      "checkpoints/b3d6eaab38cc78a59286dc6bbd8727ddf22eba2bdfc27d38d24ff7185a7249c4.json": "ebb47aab34968037ae102c81563485eadccaedc44f6bd913c55784837fda1386",
+      "checkpoints/b3fa1b97d1a760e650e73066d5bb67dda7541eccee252ac3bf2544742bb36e20.json": "b3fa1b97d1a760e650e73066d5bb67dda7541eccee252ac3bf2544742bb36e20",
+      "checkpoints/c565e3bb9a4527c468de9d1d01b46d90c9507e8bd80980d4022885baf5010a12.json": "eddff49abcc7573f016d11d60fff4f40d5591a6efb5d93b07397e441a918c29a",
+      "checkpoints/ccdb31d8d503f29239a0c1f7fff42e2956c85a3b4d0ca13dd054ed61ac61620b.json": "ccdb31d8d503f29239a0c1f7fff42e2956c85a3b4d0ca13dd054ed61ac61620b",
+      "checkpoints/ce4c5e1efa198d540d8b14b57b805c15ef24e01cc9ffd5e8f9945132bce3d2d7.json": "1f1807464cce971070ecda775f55a933dee0f7088c6bc18560836feff95267e2",
+      "checkpoints/d721ffd5ae44c864f0c0613258542e0b9996305539aa3ee6941522c6581a8500.json": "c413a1cc26501ab1d685715b6c6c8ad22e033867b3f6f5a4568064afc6b1b111",
+      "checkpoints/db13e5a53a65fa97363f0e7f9832fd6b6e632da0d20ddd599671fa31f5d0f816.json": "db13e5a53a65fa97363f0e7f9832fd6b6e632da0d20ddd599671fa31f5d0f816",
+      "checkpoints/e0c6f6e38f25ad703f45e2d87a7affe56461d6299c2c79cc1960a6ecb8ec0bf4.json": "2ad1c7fff8240b19ba3af107d9c81bfd755525c6364e8184261466649835600d",
+      "checkpoints/edf1a7053e1de8436b57d9f85a4ada587340a3c48746ed47698ec433409d0a2b.json": "924b327b1772a601993fc25a00199fa5188cd2e33b5c641cd04f61a7d2664581",
+      "checkpoints/f0db91977a834bcd3e62182db6d3454f1825b72c4f1e4a111b7cfbaf20456060.json": "77488e75f3bdcd9ea973d16971f022328f7a878395bec6f26c035ec4fb8f6aa3",
+      "checkpoints/f72f28c1684e1f9342c2d8df6caf67cdb99984ba052e28a180840be789db882c.json": "f72f28c1684e1f9342c2d8df6caf67cdb99984ba052e28a180840be789db882c",
+      "checkpoints/f92c73438b8fbdd922777354306e99828faba37dc30996f476c64967579546a5.json": "9bbcced7e9ff59bdc4e4571b1851003fc2a33d718dc4f902ab7ba1641a4dc972",
+      "source-order/90ca4ff9316995c720c6efd44ce7f9cc84ea13f8502148c7d0ac2fd55d665e98.json": "90ca4ff9316995c720c6efd44ce7f9cc84ea13f8502148c7d0ac2fd55d665e98"
+    },
+    "producer": {
+      "name": "codex-security-plugin",
+      "version": "0.1.95"
+    },
+    "scope": {
+      "artifactsReviewed": [
+        "All 63 git-tracked repository files",
+        "Application Python modules under app/",
+        "Browser assets under web/",
+        "Deployment, recovery, and utility scripts under deploy/ and scripts/",
+        "Tests, documentation, container files, and project metadata"
+      ],
+      "context": "All 63 git-tracked files were fully reviewed through an independent baseline audit, architecture mapping, focused HTTP/browser, filesystem/egress, deployment, data-ingestion, and remaining-file reviews, followed by parent validation and attack-path reconciliation.",
+      "excludePaths": [],
+      "includePaths": [
+        "."
+      ],
+      "limitations": [
+        "Static offline source review only; no live service, third-party site, webhook, ffmpeg, yt-dlp, or privileged reset workflow was executed.",
+        "External sudoers, scheduler, Tailscale ACLs, environment values, live cookies, and production source-directory permissions were unavailable; dependent findings state those preconditions and use calibrated confidence.",
+        "Optional feature enablement and reverse-proxy behavior were inferred only from repository code and documentation."
+      ],
+      "runtimeStatus": "Non-interactive Standard scan; source review and canonical draft generation completed without target execution.",
+      "summary": "Complete static Standard security scan of the entire repository at the registered git revision.",
+      "validationMode": "Source-backed static validation with independent baseline review, focused investigators, duplicate reconciliation, and explicit source-to-sink attack paths."
+    },
+    "sealedAt": "2026-10-13T01:50:44.768160Z",
+    "startedAt": "2026-10-13T01:06:26.975394Z",
+    "status": "completed",
+    "target": {
+      "displayName": "gwagonridah-blip--ph-vote",
+      "kind": "git_revision",
+      "revision": "a07500c4d8b2519817c8736818be1db971121961",
+      "targetId": "target_sha256_576ad0539ea283bd965510663c263021ccbfb9160dc8c2de4aa689413dfed123"
+    },
+    "threatModel": {
+      "assets": [
+        "Vote, reason, note, highlight, skip, MLT, index, scoreboard, and download state whose confidentiality and integrity affect the private curation workflow.",
+        "Pornhub cookies and the upstream account authority they grant to favorite-management requests.",
+        "The optional MLT webhook key and destination.",
+        "Host filesystem roots, downloaded media, and configured media-path confinement.",
+        "Server and host availability during source scans, media processing, request-created work, and upstream streams.",
+        "The cached Tailscale package, daemon binaries, root state archive, and recovered node identity used by live-box reset recovery."
+      ],
+      "assumptions": [
+        "The intended deployment is single-user and self-hosted behind loopback, Tailscale, an allowed network, or an authenticating reverse proxy; the application itself has no login.",
+        "Uvicorn proxy-header trust is disabled in the supplied launch configuration, and Docker publishes to loopback by default; deliberately broadening those boundaries is an operator decision.",
+        "No SECURITY.md, supplied threat model, knowledge base, live .env, or live data tree was available.",
+        "External source-writer trust varies by deployment, but repository documentation establishes those writers as distinct producers at a parsing boundary.",
+        "Exact sudoers, scheduler, Tailscale ACL, and optional-feature enablement are external and were not assumed beyond what repository scripts and documentation establish.",
+        "deploy/box.env documents ENV_FILE launch behavior that scripts/env.sh does not preserve unless START_INHERIT_ENV=1; this is an operational discrepancy, not a validated security finding.",
+        "The PH_PROXY example comment is narrower than current code, which also applies proxy and direct-fallback behavior to XHamster and Eporner; this is a documentation discrepancy, not a separate finding."
+      ],
+      "attackerCapabilities": [
+        "An admitted ALLOWED_NETS client can send arbitrary paths, headers, bodies, ranges, and repeated requests, but does not initially control local files, environment configuration, or root.",
+        "A malicious website can attempt cross-site requests but cannot normally forge the victim's same-origin headers or originate from an admitted server-side network.",
+        "A compromised or malicious source, scout, or digger writer can modify matching source and shared metadata but does not initially control the HTTP host, environment, or root.",
+        "A compromised box or application account can write its owned home and persistence files but is not assumed to have root except through a demonstrated privileged workflow.",
+        "Malicious external content can execute inside the browser-test context when the test deliberately embeds it.",
+        "The operator controls environment, volumes, proxies, and root recovery and is trusted; authorized operator configuration is not itself attacker input."
+      ],
+      "securityObjectives": [
+        "Restrict private data and credential operations to intended network or authenticating-proxy clients, and block cross-site mutations.",
+        "Prevent metadata and request inputs from escaping configured roots, becoming active markup or code, or selecting unintended server-side destinations.",
+        "Keep cookies, webhook secrets, and root node identity on their intended server- or root-side boundary.",
+        "Bound CPU, memory, threads, disk use, upstream reads, and external-process work against admitted clients and malformed sources.",
+        "Preserve atomic file-backed state and tolerate malformed individual inputs without aborting the whole index.",
+        "Authenticate privileged recovery inputs and preserve the boundary between user-writable persistence and root-executed software or restored state."
+      ],
+      "summary": "ph-vote is a self-hosted FastAPI service for browsing and rating clips. HTTP authorization is network- and Host-based with no application login; local source, scout, and digger files feed an index and browser rendering; media paths invoke urllib, yt-dlp, ffmpeg, and an optional MLT webhook; file-backed state and optional credentials sit under configured runtime directories. Docker binds loopback by default, while a separate live-box recovery script uses passwordless sudo to preserve Tailscale across resets.",
+      "trustBoundaries": [
+        "Browser or API client to FastAPI guards: admitted clients are selected by source network, Host, and Origin controls and share authority because the application has no per-user login.",
+        "HTTP mutation handlers to file-backed state: request values cross validators and atomic-write boundaries before later rendering or processing.",
+        "Source, scout, digger, and export files to index, browser, and server-side media logic: documentation defines external writers, establishing a parsing and integration boundary even when a deployment trusts them.",
+        "Application server to external adult sites and CDNs through proxy/direct urllib, yt-dlp, and ffmpeg execution.",
+        "Application server to credential-bearing Pornhub favorite operations and the optional authenticated MLT webhook.",
+        "Unprivileged box account and persistent home storage to passwordless-sudo recovery of root-owned Tailscale software and state; exact sudoers and scheduler configuration are external.",
+        "Developer or CI host to third-party browser content loaded by the UI smoke test."
+      ]
+    }
+  },
+  "schemaVersion": "1.0"
+}

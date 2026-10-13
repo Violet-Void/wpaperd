@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "gwagonridah-blip--ph-vote",
+      "repository": "https://github.com/gwagonridah-blip/ph-vote.git",
+      "revision": "a07500c4d8b2519817c8736818be1db971121961",
+      "mode": "standard"
+    }
+  ]
+}
