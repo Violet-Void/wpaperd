@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Report which wpaperd/wpaperctl builds are installed and in use, and flag mismatches
+# such as a fork wpaperctl talking to the distribution's wpaperd daemon.
+# Read-only: it never installs, removes or restarts anything.
+# Exit status: 0 when no problem was found, 1 otherwise.
+
+set -uo pipefail
+
+build_dir=${WPAPERD_BUILD_DIR:-target/release}
+problems=0
+
+warn() {
+	printf '  ! %s\n' "$*"
+	problems=$((problems + 1))
+}
+
+# Describe where a binary comes from: pacman package, this checkout's build, or unknown.
+origin() {
+	local file=$1 owner
+	if command -v pacman >/dev/null 2>&1 && owner=$(pacman -Qo "$file" 2>/dev/null); then
+		owner=${owner##* is owned by }
+		if [[ $owner == wpaperd\ * ]]; then
+			printf 'pacman: %s (upstream Arch package)' "$owner"
+		else
+			printf 'pacman: %s' "$owner"
+		fi
+	elif [[ -x $build_dir/${file##*/} ]] && cmp -s "$file" "$build_dir/${file##*/}"; then
+		printf 'same as this checkout'"'"'s build'
+	else
+		printf 'not package-owned'
+	fi
+}
+
+echo 'Binaries on PATH (first one wins):'
+declare -A first
+for bin in wpaperd wpaperctl; do
+	mapfile -t paths < <(type -ap "$bin" | while read -r p; do readlink -f "$p"; done | awk '!seen[$0]++')
+	if ((${#paths[@]} == 0)); then
+		printf '  %s: not found\n' "$bin"
+		continue
+	fi
+	first[$bin]=${paths[0]}
+	for p in "${paths[@]}"; do
+		printf '  %-10s %s  [%s]\n' "$bin" "$p" "$(origin "$p")"
+	done
+	((${#paths[@]} > 1)) && warn "several $bin binaries on PATH; the first one listed is used"
+done
+
+if [[ -x $build_dir/wpaperd && ${first[wpaperd]:-} != "$(readlink -f "$build_dir/wpaperd")" ]] &&
+	! cmp -s "$build_dir/wpaperd" "${first[wpaperd]:-/dev/null}"; then
+	echo "  note: this checkout's build ($build_dir) is not the wpaperd on PATH"
+fi
+if [[ -n ${first[wpaperctl]:-} ]] && ! "${first[wpaperctl]}" scene --help >/dev/null 2>&1; then
+	echo "  note: ${first[wpaperctl]} has no 'scene' command (upstream build)"
+fi
+
+echo
+echo 'Running daemon:'
+daemon_exe=
+mapfile -t pids < <(pgrep -u "$(id -u)" -x wpaperd)
+if ((${#pids[@]} == 0)); then
+	echo '  none'
+else
+	for pid in "${pids[@]}"; do
+		exe=$(readlink "/proc/$pid/exe" 2>/dev/null || echo unknown)
+		printf '  pid %s  %s  [%s]\n' "$pid" "$exe" "$(origin "${exe% (deleted)}")"
+		[[ $exe == *' (deleted)' ]] && warn "pid $pid runs a binary that was replaced on disk; restart wpaperd"
+		daemon_exe=${exe% (deleted)}
+	done
+	((${#pids[@]} > 1)) && warn 'more than one wpaperd is running'
+fi
+
+if [[ -n $daemon_exe && -n ${first[wpaperctl]:-} &&
+	${daemon_exe%/*} != "${first[wpaperctl]%/*}" ]]; then
+	warn "wpaperctl (${first[wpaperctl]}) and the running daemon ($daemon_exe) come from different" \
+		"installs; requests the daemon does not know (e.g. 'wpaperctl scene') fail"
+fi
+
+echo
+echo 'systemd user service:'
+if command -v systemctl >/dev/null 2>&1 &&
+	unit=$(systemctl --user show -p LoadState -p FragmentPath -p DropInPaths -p ExecStart \
+		-p ActiveState wpaperd.service 2>/dev/null) &&
+	grep -qx 'LoadState=loaded' <<<"$unit"; then
+	fragment=$(sed -n 's/^FragmentPath=//p' <<<"$unit")
+	dropins=$(sed -n 's/^DropInPaths=//p' <<<"$unit")
+	exec_path=$(sed -n 's/^ExecStart={ path=\([^ ;]*\).*/\1/p' <<<"$unit")
+	printf '  unit       %s\n' "$fragment"
+	[[ -n $dropins ]] && printf '  drop-ins   %s\n' "$dropins"
+	printf '  ExecStart  %s\n' "${exec_path:-unknown}"
+	printf '  state      %s\n' "$(sed -n 's/^ActiveState=//p' <<<"$unit")"
+	if [[ -n $exec_path && -n ${first[wpaperd]:-} &&
+		$(readlink -f "$exec_path") != "${first[wpaperd]}" ]]; then
+		warn "the service starts $exec_path, but wpaperd on PATH is ${first[wpaperd]}"
+	fi
+else
+	echo '  wpaperd.service is not installed'
+fi
+
+echo
+echo 'Configuration:'
+config=${XDG_CONFIG_HOME:-$HOME/.config}/wpaperd
+for name in wallpaper.toml config.toml; do
+	if [[ -e $config/$name ]]; then
+		printf '  %s' "$config/$name"
+		[[ -L $config/$name ]] && printf ' -> %s' "$(readlink -f "$config/$name")"
+		echo
+		[[ $name == wallpaper.toml ]] && echo '  note: legacy wallpaper.toml takes precedence over config.toml'
+		break
+	fi
+done
+echo '  The fork reads the same file and format; no config migration is needed.'
+
+echo
+if ((problems == 0)); then
+	echo 'No problems found.'
+	exit 0
+fi
+echo "$problems problem(s) found. On Arch, 'make arch-pkg' replaces the repo package with this"
+echo "checkout; elsewhere use 'make install' and point wpaperd.service at the installed binary."
+exit 1

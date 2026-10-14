@@ -39,31 +39,55 @@ wpaperd. For this reason **Hyprland is not supported by wpaperd**.
 - `mesa`
 - `wayland-client`
 - `wayland-egl`
-- `rinstall` (optional, for installing `wpaperd`)
+- `make` and `scdoc` (for building and installing with the Makefile)
 - `libdav1d` (optional, for loading `avif` images)
 
 ### Build
 
-To install `wpaperd`, clone the repository and build the project:
+Clone this fork and build it with `make`, which runs `cargo build --release --locked` and
+generates the man pages (`scdoc` is needed for `wpaperd-output.5`):
 
 ```bash
-$ git clone https://github.com/danyspin97/wpaperd
+$ git clone https://github.com/Violet-Void/wpaperd
 $ cd wpaperd
-$ cargo build --release
+$ make
 ```
 
-Generate the man pages by running `scdoc`:
-
-```bash
-$ scdoc < man/wpaperd-output.5.scd > man/wpaperd-output.5
-```
+Pass extra cargo features with `FEATURES`, for example `make FEATURES=avif`.
 
 ### Install
 
-You can install both the daemon (`wpaperd`) and cli (`wpaperctl`) using **rinstall**:
+Pick one route. `make help` lists every target and variable.
+
+- **Arch Linux:** `make arch-pkg` builds the committed `HEAD` as `wpaperd-violet-git` and
+  installs it with `makepkg -si`. It `provides` and `conflicts` with the repo `wpaperd`
+  package, so pacman offers to replace it and `/usr/bin/wpaperd` becomes the fork. Uncommitted
+  changes are not packaged.
+- **System-wide:** `make` as your user, then `sudo make install` (default `PREFIX=/usr/local`).
+- **Per user:** `make install PREFIX=$HOME/.local`, with `~/.local/bin` early in `PATH`.
+
+`make install` also installs a systemd user unit whose `ExecStart` points at the installed
+binary, plus completions and man pages. `make uninstall` with the same `PREFIX` removes them,
+and `DESTDIR` stages an install for packaging. `make install` refuses to overwrite binaries
+that a pacman package owns; use `make arch-pkg` for that case.
+
+### Switching from the upstream package or another build
+
+The fork reads the same `$XDG_CONFIG_HOME/wpaperd/config.toml` in the same format, so the
+configuration needs no migration. What must match is the binary: when `wpaperctl` and the running
+daemon come from different installs, newer requests such as `wpaperctl scene` fail.
+
+Run the read-only check, which lists every `wpaperd`/`wpaperctl` on `PATH` with its pacman owner,
+the running daemon's executable, and the service's `ExecStart`:
+
 ```bash
-$ rinstall install --yes
+$ make doctor
 ```
+
+After installing, restart the daemon so it runs the new binary (`systemctl --user restart
+wpaperd`, or restart your compositor's `exec` line). If your own `wpaperd.service` hardcodes a
+path such as `/usr/bin/wpaperd`, either keep that path (Arch route) or change `ExecStart` to the
+binary you installed.
 
 To run _wpaperd_, run the **daemon**:
 
