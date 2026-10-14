@@ -27,6 +27,19 @@ MAKEPKG_FLAGS ?= -si
 
 BINS := wpaperd wpaperctl
 
+# install and uninstall refuse to touch a PREFIX whose binaries a pacman package owns.
+define PACMAN_GUARD
+if [ -z '$(DESTDIR)' ] && command -v pacman >/dev/null 2>&1; then \
+	for bin in $(BINS); do \
+		if owner=$$(pacman -Qqo '$(BINDIR)'/$$bin 2>/dev/null); then \
+			echo "error: $(BINDIR)/$$bin belongs to the pacman package '$$owner'." >&2; \
+			echo "Use pacman (or 'make arch-pkg') for it, or pick another PREFIX (e.g. PREFIX=\$$HOME/.local)." >&2; \
+			exit 1; \
+		fi; \
+	done; \
+fi
+endef
+
 .PHONY: all help build install uninstall arch-pkg doctor
 
 all: build
@@ -55,15 +68,7 @@ install:
 	@for bin in $(BINS); do \
 		test -x '$(OUT)'/$$bin || { echo "error: $(OUT)/$$bin is missing; run 'make' as your user first" >&2; exit 1; }; \
 	done
-	@if [ -z '$(DESTDIR)' ] && command -v pacman >/dev/null 2>&1; then \
-		for bin in $(BINS); do \
-			if owner=$$(pacman -Qqo '$(BINDIR)'/$$bin 2>/dev/null); then \
-				echo "error: $(BINDIR)/$$bin belongs to the pacman package '$$owner'." >&2; \
-				echo "Use 'make arch-pkg' to replace it, or pick another PREFIX (e.g. PREFIX=\$$HOME/.local)." >&2; \
-				exit 1; \
-			fi; \
-		done; \
-	fi
+	@$(PACMAN_GUARD)
 	install -Dm755 '$(OUT)/wpaperd' '$(DESTDIR)$(BINDIR)/wpaperd'
 	install -Dm755 '$(OUT)/wpaperctl' '$(DESTDIR)$(BINDIR)/wpaperctl'
 	install -Dm644 '$(OUT)/man/wpaperd.1' '$(DESTDIR)$(MANDIR)/man1/wpaperd.1'
@@ -85,6 +90,7 @@ install:
 	chmod 644 '$(DESTDIR)$(SYSTEMD_USER_UNITDIR)/wpaperd.service'
 
 uninstall:
+	@$(PACMAN_GUARD)
 	rm -f '$(DESTDIR)$(BINDIR)/wpaperd' '$(DESTDIR)$(BINDIR)/wpaperctl'
 	rm -f '$(DESTDIR)$(MANDIR)/man1/wpaperd.1' '$(DESTDIR)$(MANDIR)/man1/wpaperctl.1' \
 		'$(DESTDIR)$(MANDIR)/man5/wpaperd-output.5'
