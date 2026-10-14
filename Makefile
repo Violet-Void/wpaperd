@@ -98,12 +98,15 @@ uninstall:
 	rm -f '$(DESTDIR)$(SYSTEMD_USER_UNITDIR)/wpaperd.service'
 
 # makepkg rewrites pkgver inside the PKGBUILD it runs, so it runs on a copy in the
-# target directory. It packages the committed HEAD; uncommitted edits are not included.
+# target directory, with its own SRCDEST/BUILDDIR so a shared makepkg.conf cache never
+# holds a mirror of another checkout path. PKGDEST stays as configured.
+# It packages the committed HEAD; uncommitted edits are not included.
 arch-pkg:
 	@command -v makepkg >/dev/null 2>&1 || { echo 'error: makepkg not found (Arch Linux only)' >&2; exit 1; }
 	@git diff --quiet HEAD -- || echo "warning: uncommitted changes are not packaged; building $$(git rev-parse --short HEAD)" >&2
 	install -Dm644 contrib/arch/PKGBUILD '$(ARCH_BUILDDIR)/PKGBUILD'
 	cd '$(ARCH_BUILDDIR)' && \
+		SRCDEST='$(ARCH_BUILDDIR)/src' BUILDDIR='$(ARCH_BUILDDIR)/build' \
 		WPAPERD_SOURCE="git+file://$(CURDIR)#commit=$$(git -C '$(CURDIR)' rev-parse HEAD)" \
 		makepkg $(MAKEPKG_FLAGS)
 
