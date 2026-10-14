@@ -39,7 +39,8 @@ wpaperd. For this reason **Hyprland is not supported by wpaperd**.
 - `mesa`
 - `wayland-client`
 - `wayland-egl`
-- `make` and `scdoc` (for building and installing with the Makefile)
+- `make` (for building and installing with the Makefile)
+- `scdoc` (optional, for the `wpaperd-output.5` man page)
 - `libdav1d` (optional, for loading `avif` images)
 
 ### Build
@@ -63,7 +64,8 @@ Pick one route. `make help` lists every target and variable.
   installs it with `makepkg -si`. It `provides` and `conflicts` with the repo `wpaperd`
   package, so pacman offers to replace it and `/usr/bin/wpaperd` becomes the fork. Uncommitted
   changes are not packaged.
-- **System-wide:** `make` as your user, then `sudo make install` (default `PREFIX=/usr/local`).
+- **System-wide:** `make` as your user, then `sudo make install` (default `PREFIX=/usr/local`);
+  remove it with `sudo make uninstall`.
 - **Per user:** `make install PREFIX=$HOME/.local`, with `~/.local/bin` early in `PATH`.
 
 `make install` also installs a systemd user unit whose `ExecStart` points at the installed
@@ -84,10 +86,10 @@ the running daemon's executable, and the service's `ExecStart`:
 $ make doctor
 ```
 
-After installing, restart the daemon so it runs the new binary (`systemctl --user restart
-wpaperd`, or restart your compositor's `exec` line). If your own `wpaperd.service` hardcodes a
-path such as `/usr/bin/wpaperd`, either keep that path (Arch route) or change `ExecStart` to the
-binary you installed.
+After installing, restart the daemon so it runs the new binary (`systemctl --user daemon-reload`
+then `systemctl --user restart wpaperd`, or restart your compositor's `exec` line). If your own
+`wpaperd.service` hardcodes a path such as `/usr/bin/wpaperd`, either keep that path (Arch route)
+or change `ExecStart` to the binary you installed.
 
 To run _wpaperd_, run the **daemon**:
 

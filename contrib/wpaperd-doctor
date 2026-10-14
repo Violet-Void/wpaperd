@@ -57,8 +57,11 @@ fi
 echo
 echo 'Running daemon:'
 daemon_exe=
-mapfile -t pids < <(pgrep -u "$(id -u)" -x wpaperd)
-if ((${#pids[@]} == 0)); then
+pids=()
+command -v pgrep >/dev/null 2>&1 && mapfile -t pids < <(pgrep -u "$(id -u)" -x wpaperd)
+if ! command -v pgrep >/dev/null 2>&1; then
+	echo '  unknown (pgrep not found)'
+elif ((${#pids[@]} == 0)); then
 	echo '  none'
 else
 	for pid in "${pids[@]}"; do
@@ -78,10 +81,12 @@ fi
 
 echo
 echo 'systemd user service:'
-if command -v systemctl >/dev/null 2>&1 &&
+unit=
+if command -v systemctl >/dev/null 2>&1; then
 	unit=$(systemctl --user show -p LoadState -p FragmentPath -p DropInPaths -p ExecStart \
-		-p ActiveState wpaperd.service 2>/dev/null) &&
-	grep -qx 'LoadState=loaded' <<<"$unit"; then
+		-p ActiveState wpaperd.service 2>/dev/null)
+fi
+if grep -qx 'LoadState=loaded' <<<"$unit"; then
 	fragment=$(sed -n 's/^FragmentPath=//p' <<<"$unit")
 	dropins=$(sed -n 's/^DropInPaths=//p' <<<"$unit")
 	exec_path=$(sed -n 's/^ExecStart={ path=\([^ ;]*\).*/\1/p' <<<"$unit")
@@ -93,8 +98,10 @@ if command -v systemctl >/dev/null 2>&1 &&
 		$(readlink -f "$exec_path") != "${first[wpaperd]}" ]]; then
 		warn "the service starts $exec_path, but wpaperd on PATH is ${first[wpaperd]}"
 	fi
-else
+elif grep -qx 'LoadState=not-found' <<<"$unit"; then
 	echo '  wpaperd.service is not installed'
+else
+	echo '  unknown (systemd user manager not reachable)'
 fi
 
 echo

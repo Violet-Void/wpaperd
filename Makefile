@@ -29,7 +29,7 @@ BINS := wpaperd wpaperctl
 
 # install and uninstall refuse to touch a PREFIX whose binaries a pacman package owns.
 define PACMAN_GUARD
-if [ -z '$(DESTDIR)' ] && command -v pacman >/dev/null 2>&1; then \
+if { [ -z '$(DESTDIR)' ] || [ '$(DESTDIR)' = / ]; } && command -v pacman >/dev/null 2>&1; then \
 	for bin in $(BINS); do \
 		if owner=$$(pacman -Qqo '$(BINDIR)'/$$bin 2>/dev/null); then \
 			echo "error: $(BINDIR)/$$bin belongs to the pacman package '$$owner'." >&2; \
@@ -59,6 +59,7 @@ build:
 	@if command -v scdoc >/dev/null 2>&1; then \
 		scdoc < man/wpaperd-output.5.scd > $(OUT)/man/wpaperd-output.5; \
 	else \
+		rm -f $(OUT)/man/wpaperd-output.5; \
 		echo 'warning: scdoc not found; wpaperd-output.5 will not be installed' >&2; \
 	fi
 
@@ -85,7 +86,7 @@ install:
 	install -Dm644 README.md '$(DESTDIR)$(DOCDIR)/README.md'
 	install -Dm644 docs/motion-scenes.md '$(DESTDIR)$(DOCDIR)/motion-scenes.md'
 	install -d '$(DESTDIR)$(SYSTEMD_USER_UNITDIR)'
-	sed 's|^ExecStart=.*|ExecStart=$(BINDIR)/wpaperd|' contrib/wpaperd.service \
+	sed 's|^ExecStart=.*|ExecStart="$(BINDIR)/wpaperd"|' contrib/wpaperd.service \
 		> '$(DESTDIR)$(SYSTEMD_USER_UNITDIR)/wpaperd.service'
 	chmod 644 '$(DESTDIR)$(SYSTEMD_USER_UNITDIR)/wpaperd.service'
 
