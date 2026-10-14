@@ -96,12 +96,30 @@ fn main() {
         }
     };
 
-    let mut conn = UnixStream::connect(socket_path().unwrap()).unwrap();
+    let socket = socket_path().unwrap();
+    let mut conn = UnixStream::connect(&socket).unwrap_or_else(|e| {
+        eprintln!(
+            "Cannot connect to wpaperd at {}: {e}. Is wpaperd running?",
+            socket.display()
+        );
+        std::process::exit(1);
+    });
     conn.write_all(&serde_json::to_vec(&msg).unwrap()).unwrap();
     let mut buf = String::new();
     conn.read_to_string(&mut buf).unwrap();
-    let res: Result<IpcResponse, IpcError> =
-        serde_json::from_str(&buf).expect("wpaperd to return a valid json");
+    if buf.is_empty() {
+        // An older or upstream daemon drops requests it cannot parse, such as `scene`.
+        eprintln!(
+            "wpaperd closed the connection without a reply. The running daemon is probably a \
+             different build that does not support this request; restart it from the same \
+             install as this wpaperctl."
+        );
+        std::process::exit(1);
+    }
+    let res: Result<IpcResponse, IpcError> = serde_json::from_str(&buf).unwrap_or_else(|e| {
+        eprintln!("wpaperd returned an invalid reply: {e}");
+        std::process::exit(1);
+    });
     match res {
         Ok(resp) => match resp {
             IpcResponse::SceneStatus(status) => {
