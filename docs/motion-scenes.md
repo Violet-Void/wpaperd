@@ -84,9 +84,12 @@ second time in the master.
 
 At least one mapped output must be present and configured to start. Absent outputs report `missing`;
 their original crops remain reserved and existing outputs are not retiled. Returning outputs reuse
-the shared controller clock and exact mapping. A size/transform mismatch causes a static still
-fallback, rather than stretching or guessing. Unmapped outputs stay in still mode. Physical monitor
-placement and bezel calibration remain explicit producer-plan inputs, not a discovery claim.
+the shared controller clock and exact mapping. A size/transform mismatch never stretches or guesses.
+At `scene start`, a mismatch on any present mapped output rejects the package and preserves the
+current session or still. After activation, a mismatch stops animation for the whole scene,
+restores still frames on all outputs and reports `fallback`. Unmapped outputs stay in still mode.
+Physical monitor placement and bezel calibration remain explicit producer-plan inputs, not a
+discovery claim.
 
 ## Producer contract and composition
 
