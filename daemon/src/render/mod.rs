@@ -1,11 +1,12 @@
 mod coordinates;
 mod egl_context;
+mod motion;
 mod renderer;
 mod shader;
 mod transition;
 mod wallpaper;
 
-use std::ffi::{c_void, CStr};
+use std::ffi::c_void;
 
 use color_eyre::Result;
 use coordinates::{get_opengl_point_coordinates, Coordinates};
@@ -28,18 +29,7 @@ macro_rules! gl_check {
     ($gl:expr, $desc:expr) => {{
         let error = $gl.GetError();
         if error != gl::NO_ERROR {
-            let error_string = $gl.GetString(error);
-            return if error_string.is_null() {
-                Err(color_eyre::eyre::eyre!("OpenGL error {error}").wrap_err($desc.to_string()))
-            } else {
-                let error_string = CStr::from_ptr(error_string as _)
-                    .to_string_lossy()
-                    .into_owned();
-                Err(
-                    color_eyre::eyre::eyre!("OpenGL error {error}: {error_string}")
-                        .wrap_err($desc.to_string()),
-                )
-            };
+            return Err(color_eyre::eyre::eyre!("OpenGL error {error}").wrap_err($desc.to_string()));
         }
     }};
 }

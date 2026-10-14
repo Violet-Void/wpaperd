@@ -1,0 +1,1302 @@
+{
+  "producer_core_sha256": "e8f258bf6d5609d38c33c5e547068bde271807000fbbd771d644d52b4b928bd0",
+  "cases": [
+    {
+      "plan": {
+        "version": 2,
+        "name": "auto-aoc4k",
+        "coordinate_space": "logical",
+        "source": "repository snapshot b823c9b42a6d71362162c5eca9924ed8d8631e1f",
+        "origin": [
+          0,
+          0
+        ],
+        "logical_canvas": [
+          3200,
+          1800
+        ],
+        "density": 1.2,
+        "master_pixels": [
+          3840,
+          2160
+        ],
+        "generation": [
+          2048,
+          1152
+        ],
+        "safe_margin": 0.12,
+        "monitors": [
+          {
+            "id": "aoc4k",
+            "label": "AOC U27G4R",
+            "description": "AOC U27G4R XZ1R7HA010945",
+            "native": [
+              3840,
+              2160
+            ],
+            "pixels": [
+              3840,
+              2160
+            ],
+            "scale": 1.2,
+            "transform": "normal",
+            "logical": [
+              3200,
+              1800
+            ],
+            "x": 0,
+            "y": 0,
+            "density": 1.2,
+            "crop_box": [
+              0,
+              0,
+              3840,
+              2160
+            ],
+            "normalized_box": [
+              0.0,
+              0.0,
+              1.0,
+              1.0
+            ],
+            "safe_box": [
+              461,
+              259,
+              3379,
+              1901
+            ]
+          }
+        ],
+        "note": "Raster sizes are upright/oriented. No additional rotation is applied. Logical alignment is not physical bezel/DPI calibration."
+      },
+      "fingerprint": "2ac8befb277424e2bb48eb6f410a91964345aaa59a135833a3ca77e206d95c76"
+    },
+    {
+      "plan": {
+        "version": 2,
+        "name": "auto-bedroom-iiyama-aoc4k-benq-aoc24",
+        "coordinate_space": "logical",
+        "source": "repository snapshot b823c9b42a6d71362162c5eca9924ed8d8631e1f",
+        "origin": [
+          -3840,
+          0
+        ],
+        "logical_canvas": [
+          10400,
+          2560
+        ],
+        "density": 1.2,
+        "master_pixels": [
+          12480,
+          3072
+        ],
+        "generation": [
+          3120,
+          768
+        ],
+        "safe_margin": 0.12,
+        "monitors": [
+          {
+            "id": "bedroom",
+            "label": "BenQ XL2411Z",
+            "description": "BNQ BenQ XL2411Z 39F03070SL0",
+            "native": [
+              1920,
+              1080
+            ],
+            "pixels": [
+              1920,
+              1080
+            ],
+            "scale": 1.0,
+            "transform": "normal",
+            "logical": [
+              1920,
+              1080
+            ],
+            "x": -3840,
+            "y": 0,
+            "density": 1.0,
+            "crop_box": [
+              0,
+              0,
+              2304,
+              1296
+            ],
+            "normalized_box": [
+              0.0,
+              0.0,
+              0.18461538461538463,
+              0.421875
+            ],
+            "safe_box": [
+              276,
+              156,
+              2028,
+              1140
+            ]
+          },
+          {
+            "id": "iiyama",
+            "label": "Iiyama PLX2483H",
+            "description": "Iiyama North America PLX2483H 1128044201149",
+            "native": [
+              1920,
+              1080
+            ],
+            "pixels": [
+              1920,
+              1080
+            ],
+            "scale": 1.0,
+            "transform": "normal",
+            "logical": [
+              1920,
+              1080
+            ],
+            "x": -1920,
+            "y": 0,
+            "density": 1.0,
+            "crop_box": [
+              2304,
+              0,
+              4608,
+              1296
+            ],
+            "normalized_box": [
+              0.18461538461538463,
+              0.0,
+              0.36923076923076925,
+              0.421875
+            ],
+            "safe_box": [
+              2580,
+              156,
+              4332,
+              1140
+            ]
+          },
+          {
+            "id": "aoc4k",
+            "label": "AOC U27G4R",
+            "description": "AOC U27G4R XZ1R7HA010945",
+            "native": [
+              3840,
+              2160
+            ],
+            "pixels": [
+              3840,
+              2160
+            ],
+            "scale": 1.2,
+            "transform": "normal",
+            "logical": [
+              3200,
+              1800
+            ],
+            "x": 0,
+            "y": 0,
+            "density": 1.2,
+            "crop_box": [
+              4608,
+              0,
+              8448,
+              2160
+            ],
+            "normalized_box": [
+              0.36923076923076925,
+              0.0,
+              0.676923076923077,
+              0.703125
+            ],
+            "safe_box": [
+              5069,
+              259,
+              7987,
+              1901
+            ]
+          },
+          {
+            "id": "benq",
+            "label": "BenQ PD2500Q",
+            "description": "BNQ BenQ PD2500Q PCK0037401Q",
+            "native": [
+              2560,
+              1440
+            ],
+            "pixels": [
+              1440,
+              2560
+            ],
+            "scale": 1.0,
+            "transform": "270",
+            "logical": [
+              1440,
+              2560
+            ],
+            "x": 3200,
+            "y": 0,
+            "density": 1.0,
+            "crop_box": [
+              8448,
+              0,
+              10176,
+              3072
+            ],
+            "normalized_box": [
+              0.676923076923077,
+              0.0,
+              0.8153846153846154,
+              1.0
+            ],
+            "safe_box": [
+              8655,
+              369,
+              9969,
+              2703
+            ]
+          },
+          {
+            "id": "aoc24",
+            "label": "AOC 24G4",
+            "description": "AOC 24G4 12VR1HA003257",
+            "native": [
+              1920,
+              1080
+            ],
+            "pixels": [
+              1920,
+              1080
+            ],
+            "scale": 1.0,
+            "transform": "normal",
+            "logical": [
+              1920,
+              1080
+            ],
+            "x": 4640,
+            "y": 0,
+            "density": 1.0,
+            "crop_box": [
+              10176,
+              0,
+              12480,
+              1296
+            ],
+            "normalized_box": [
+              0.8153846153846154,
+              0.0,
+              1.0,
+              0.421875
+            ],
+            "safe_box": [
+              10452,
+              156,
+              12204,
+              1140
+            ]
+          }
+        ],
+        "note": "Raster sizes are upright/oriented. No additional rotation is applied. Logical alignment is not physical bezel/DPI calibration."
+      },
+      "fingerprint": "d3c1c67e0af4ef665a3c1d8e06c0ace3d0b641d93c5e87169a2ac346ea6d382a"
+    },
+    {
+      "plan": {
+        "version": 2,
+        "name": "DEL\u007f and \ud83c\udf0c",
+        "coordinate_space": "logical",
+        "source": "unicode \u00e9",
+        "origin": [
+          -20.5,
+          10.0
+        ],
+        "logical_canvas": [
+          601.0,
+          799.0
+        ],
+        "density": 1.0,
+        "master_pixels": [
+          608,
+          800
+        ],
+        "generation": [
+          608,
+          800
+        ],
+        "safe_margin": 0.12,
+        "monitors": [
+          {
+            "id": "portrait",
+            "pixels": [
+              601,
+              799
+            ],
+            "logical": [
+              601.0,
+              799.0
+            ],
+            "x": -20.5,
+            "y": 10.0,
+            "transform": "90",
+            "density": 1.0,
+            "crop_box": [
+              0,
+              0,
+              601,
+              799
+            ],
+            "normalized_box": [
+              0.0,
+              0.0,
+              0.9884868421052632,
+              0.99875
+            ],
+            "safe_box": [
+              72,
+              96,
+              529,
+              703
+            ]
+          }
+        ],
+        "note": "Raster sizes are upright/oriented. No additional rotation is applied. Logical alignment is not physical bezel/DPI calibration.",
+        "content_pixels": [
+          601,
+          799
+        ],
+        "canvas_padding": [
+          0,
+          0,
+          7,
+          1
+        ]
+      },
+      "fingerprint": "549e7c57062efc821017f6a4f9fe63d57d67ffffa1a6b805699166756fc649f7"
+    },
+    {
+      "plan": {
+        "version": 2,
+        "name": "nested-scene-test",
+        "coordinate_space": "logical",
+        "source": "synthetic fixed virtual outputs",
+        "origin": [
+          0,
+          0
+        ],
+        "logical_canvas": [
+          1600,
+          600
+        ],
+        "density": 1.0,
+        "master_pixels": [
+          1600,
+          600
+        ],
+        "generation": [
+          1152,
+          432
+        ],
+        "safe_margin": 0.12,
+        "monitors": [
+          {
+            "id": "left",
+            "pixels": [
+              800,
+              600
+            ],
+            "logical": [
+              800,
+              600
+            ],
+            "x": 0,
+            "y": 0,
+            "density": 1.0,
+            "crop_box": [
+              0,
+              0,
+              800,
+              600
+            ],
+            "normalized_box": [
+              0.0,
+              0.0,
+              0.5,
+              1.0
+            ],
+            "safe_box": [
+              96,
+              72,
+              704,
+              528
+            ]
+          },
+          {
+            "id": "right",
+            "pixels": [
+              800,
+              600
+            ],
+            "logical": [
+              800,
+              600
+            ],
+            "x": 800,
+            "y": 0,
+            "density": 1.0,
+            "crop_box": [
+              800,
+              0,
+              1600,
+              600
+            ],
+            "normalized_box": [
+              0.5,
+              0.0,
+              1.0,
+              1.0
+            ],
+            "safe_box": [
+              896,
+              72,
+              1504,
+              528
+            ]
+          }
+        ],
+        "note": "Raster sizes are upright/oriented. No additional rotation is applied. Logical alignment is not physical bezel/DPI calibration."
+      },
+      "fingerprint": "78cea9b6c4a6bd66fffe274fa9b6cb14d3c3d285498ffb80c2a8329cbfe77614"
+    }
+  ],
+  "canonical_number_cases": [
+    {
+      "json": "{\"v\":-0.0}",
+      "expected": "{\"v\":-0.0}"
+    },
+    {
+      "json": "{\"v\":0.0}",
+      "expected": "{\"v\":0.0}"
+    },
+    {
+      "json": "{\"v\":1.0}",
+      "expected": "{\"v\":1.0}"
+    },
+    {
+      "json": "{\"v\":0.0001}",
+      "expected": "{\"v\":0.0001}"
+    },
+    {
+      "json": "{\"v\":1e-05}",
+      "expected": "{\"v\":1e-05}"
+    },
+    {
+      "json": "{\"v\":1000000000000000.0}",
+      "expected": "{\"v\":1000000000000000.0}"
+    },
+    {
+      "json": "{\"v\":1e+16}",
+      "expected": "{\"v\":1e+16}"
+    },
+    {
+      "json": "{\"v\":1e-07}",
+      "expected": "{\"v\":1e-07}"
+    },
+    {
+      "json": "{\"v\":5e-324}",
+      "expected": "{\"v\":5e-324}"
+    },
+    {
+      "json": "{\"v\":1.7976931348623157e+308}",
+      "expected": "{\"v\":1.7976931348623157e+308}"
+    },
+    {
+      "json": "{\"v\":5.3749874709550475e+255}",
+      "expected": "{\"v\":5.3749874709550475e+255}"
+    },
+    {
+      "json": "{\"v\":-2.5118587572727604e-216}",
+      "expected": "{\"v\":-2.5118587572727604e-216}"
+    },
+    {
+      "json": "{\"v\":-4.713800638984273e+257}",
+      "expected": "{\"v\":-4.713800638984273e+257}"
+    },
+    {
+      "json": "{\"v\":-6.094083459327764e-55}",
+      "expected": "{\"v\":-6.094083459327764e-55}"
+    },
+    {
+      "json": "{\"v\":-3.485984796798429e+253}",
+      "expected": "{\"v\":-3.485984796798429e+253}"
+    },
+    {
+      "json": "{\"v\":4.409658330184902e-189}",
+      "expected": "{\"v\":4.409658330184902e-189}"
+    },
+    {
+      "json": "{\"v\":-3.870752137619552e-157}",
+      "expected": "{\"v\":-3.870752137619552e-157}"
+    },
+    {
+      "json": "{\"v\":-3.0983258003045816e-48}",
+      "expected": "{\"v\":-3.0983258003045816e-48}"
+    },
+    {
+      "json": "{\"v\":8.105184358130969e-243}",
+      "expected": "{\"v\":8.105184358130969e-243}"
+    },
+    {
+      "json": "{\"v\":-5.3232870879250576e-36}",
+      "expected": "{\"v\":-5.3232870879250576e-36}"
+    },
+    {
+      "json": "{\"v\":1.9882381946781952e-16}",
+      "expected": "{\"v\":1.9882381946781952e-16}"
+    },
+    {
+      "json": "{\"v\":-3.0006113335461387e-201}",
+      "expected": "{\"v\":-3.0006113335461387e-201}"
+    },
+    {
+      "json": "{\"v\":1.3986378091052798e-285}",
+      "expected": "{\"v\":1.3986378091052798e-285}"
+    },
+    {
+      "json": "{\"v\":-4.2128866199474734e-38}",
+      "expected": "{\"v\":-4.2128866199474734e-38}"
+    },
+    {
+      "json": "{\"v\":-3.0333401604553037e-217}",
+      "expected": "{\"v\":-3.0333401604553037e-217}"
+    },
+    {
+      "json": "{\"v\":-1.2245127221522977e-239}",
+      "expected": "{\"v\":-1.2245127221522977e-239}"
+    },
+    {
+      "json": "{\"v\":-1.1310919216210574e+295}",
+      "expected": "{\"v\":-1.1310919216210574e+295}"
+    },
+    {
+      "json": "{\"v\":-2.419652665042516e-185}",
+      "expected": "{\"v\":-2.419652665042516e-185}"
+    },
+    {
+      "json": "{\"v\":6.1835734459042814e-61}",
+      "expected": "{\"v\":6.1835734459042814e-61}"
+    },
+    {
+      "json": "{\"v\":3.3262714590109928e+295}",
+      "expected": "{\"v\":3.3262714590109928e+295}"
+    },
+    {
+      "json": "{\"v\":6.756133732709652e-120}",
+      "expected": "{\"v\":6.756133732709652e-120}"
+    },
+    {
+      "json": "{\"v\":5.2552908516558755e-137}",
+      "expected": "{\"v\":5.2552908516558755e-137}"
+    },
+    {
+      "json": "{\"v\":-3.077334543877257e-90}",
+      "expected": "{\"v\":-3.077334543877257e-90}"
+    },
+    {
+      "json": "{\"v\":2.644107118599783e-86}",
+      "expected": "{\"v\":2.644107118599783e-86}"
+    },
+    {
+      "json": "{\"v\":-4.994403392070635e+170}",
+      "expected": "{\"v\":-4.994403392070635e+170}"
+    },
+    {
+      "json": "{\"v\":-1.2181456321290915e-05}",
+      "expected": "{\"v\":-1.2181456321290915e-05}"
+    },
+    {
+      "json": "{\"v\":2.816151162388722e+181}",
+      "expected": "{\"v\":2.816151162388722e+181}"
+    },
+    {
+      "json": "{\"v\":-58705965.35411233}",
+      "expected": "{\"v\":-58705965.35411233}"
+    },
+    {
+      "json": "{\"v\":4.4257977435310026e+110}",
+      "expected": "{\"v\":4.4257977435310026e+110}"
+    },
+    {
+      "json": "{\"v\":-4.3817799936867615e-43}",
+      "expected": "{\"v\":-4.3817799936867615e-43}"
+    },
+    {
+      "json": "{\"v\":-9.624563776444494e+63}",
+      "expected": "{\"v\":-9.624563776444494e+63}"
+    },
+    {
+      "json": "{\"v\":-4.035911458616196e-196}",
+      "expected": "{\"v\":-4.035911458616196e-196}"
+    },
+    {
+      "json": "{\"v\":3.751045216413496e+277}",
+      "expected": "{\"v\":3.751045216413496e+277}"
+    },
+    {
+      "json": "{\"v\":5.758788724337425e+223}",
+      "expected": "{\"v\":5.758788724337425e+223}"
+    },
+    {
+      "json": "{\"v\":-6.576252557700085e+283}",
+      "expected": "{\"v\":-6.576252557700085e+283}"
+    },
+    {
+      "json": "{\"v\":5.88123940220429e+179}",
+      "expected": "{\"v\":5.88123940220429e+179}"
+    },
+    {
+      "json": "{\"v\":-1.0725908837218838e+211}",
+      "expected": "{\"v\":-1.0725908837218838e+211}"
+    },
+    {
+      "json": "{\"v\":-1.2574711970970823e+53}",
+      "expected": "{\"v\":-1.2574711970970823e+53}"
+    },
+    {
+      "json": "{\"v\":6.922820292828621e-296}",
+      "expected": "{\"v\":6.922820292828621e-296}"
+    },
+    {
+      "json": "{\"v\":5.8919997181788894e-126}",
+      "expected": "{\"v\":5.8919997181788894e-126}"
+    },
+    {
+      "json": "{\"v\":2.168611577728563e+208}",
+      "expected": "{\"v\":2.168611577728563e+208}"
+    },
+    {
+      "json": "{\"v\":1.8865455598937616e-18}",
+      "expected": "{\"v\":1.8865455598937616e-18}"
+    },
+    {
+      "json": "{\"v\":-1.1915297273993004e-182}",
+      "expected": "{\"v\":-1.1915297273993004e-182}"
+    },
+    {
+      "json": "{\"v\":-123867.22774789316}",
+      "expected": "{\"v\":-123867.22774789316}"
+    },
+    {
+      "json": "{\"v\":-1.690827123901452e-131}",
+      "expected": "{\"v\":-1.690827123901452e-131}"
+    },
+    {
+      "json": "{\"v\":2.525556030480088e+244}",
+      "expected": "{\"v\":2.525556030480088e+244}"
+    },
+    {
+      "json": "{\"v\":-5.009447540693265e+220}",
+      "expected": "{\"v\":-5.009447540693265e+220}"
+    },
+    {
+      "json": "{\"v\":4.362933057365709e+273}",
+      "expected": "{\"v\":4.362933057365709e+273}"
+    },
+    {
+      "json": "{\"v\":-8.152740355619878e-253}",
+      "expected": "{\"v\":-8.152740355619878e-253}"
+    },
+    {
+      "json": "{\"v\":2.329949322198437e-134}",
+      "expected": "{\"v\":2.329949322198437e-134}"
+    },
+    {
+      "json": "{\"v\":-2.5672913755284947e-273}",
+      "expected": "{\"v\":-2.5672913755284947e-273}"
+    },
+    {
+      "json": "{\"v\":4.520089592154844e+217}",
+      "expected": "{\"v\":4.520089592154844e+217}"
+    },
+    {
+      "json": "{\"v\":-4.193456078529096e+19}",
+      "expected": "{\"v\":-4.193456078529096e+19}"
+    },
+    {
+      "json": "{\"v\":3.907424147131257e-277}",
+      "expected": "{\"v\":3.907424147131257e-277}"
+    },
+    {
+      "json": "{\"v\":7.397276572191768e+210}",
+      "expected": "{\"v\":7.397276572191768e+210}"
+    },
+    {
+      "json": "{\"v\":5.77276564263593e+153}",
+      "expected": "{\"v\":5.77276564263593e+153}"
+    },
+    {
+      "json": "{\"v\":-3.726784699699619e+135}",
+      "expected": "{\"v\":-3.726784699699619e+135}"
+    },
+    {
+      "json": "{\"v\":-1.3167049546753387e+93}",
+      "expected": "{\"v\":-1.3167049546753387e+93}"
+    },
+    {
+      "json": "{\"v\":2.856928156427914e-23}",
+      "expected": "{\"v\":2.856928156427914e-23}"
+    },
+    {
+      "json": "{\"v\":-2.1951394149197725e-61}",
+      "expected": "{\"v\":-2.1951394149197725e-61}"
+    },
+    {
+      "json": "{\"v\":7.393437603289561e+282}",
+      "expected": "{\"v\":7.393437603289561e+282}"
+    },
+    {
+      "json": "{\"v\":4.707219718553832e-221}",
+      "expected": "{\"v\":4.707219718553832e-221}"
+    },
+    {
+      "json": "{\"v\":-5.72408524174437e-32}",
+      "expected": "{\"v\":-5.72408524174437e-32}"
+    },
+    {
+      "json": "{\"v\":1.151609883362654e-40}",
+      "expected": "{\"v\":1.151609883362654e-40}"
+    },
+    {
+      "json": "{\"v\":2.3137909144962158e-117}",
+      "expected": "{\"v\":2.3137909144962158e-117}"
+    },
+    {
+      "json": "{\"v\":-1.808981839327429e+102}",
+      "expected": "{\"v\":-1.808981839327429e+102}"
+    },
+    {
+      "json": "{\"v\":-1.0938448463475595e-25}",
+      "expected": "{\"v\":-1.0938448463475595e-25}"
+    },
+    {
+      "json": "{\"v\":-2.0788525943870375e+66}",
+      "expected": "{\"v\":-2.0788525943870375e+66}"
+    },
+    {
+      "json": "{\"v\":3.125283523315001e+136}",
+      "expected": "{\"v\":3.125283523315001e+136}"
+    },
+    {
+      "json": "{\"v\":-4.608751701149318e+60}",
+      "expected": "{\"v\":-4.608751701149318e+60}"
+    },
+    {
+      "json": "{\"v\":-103381.23969935857}",
+      "expected": "{\"v\":-103381.23969935857}"
+    },
+    {
+      "json": "{\"v\":-1.2402682666511101e+126}",
+      "expected": "{\"v\":-1.2402682666511101e+126}"
+    },
+    {
+      "json": "{\"v\":2.336459294514217e-199}",
+      "expected": "{\"v\":2.336459294514217e-199}"
+    },
+    {
+      "json": "{\"v\":-2.8637154285112257e-260}",
+      "expected": "{\"v\":-2.8637154285112257e-260}"
+    },
+    {
+      "json": "{\"v\":-2.850993289287936e-255}",
+      "expected": "{\"v\":-2.850993289287936e-255}"
+    },
+    {
+      "json": "{\"v\":-1.1707658852549588e+234}",
+      "expected": "{\"v\":-1.1707658852549588e+234}"
+    },
+    {
+      "json": "{\"v\":-1.4540632381332866e-86}",
+      "expected": "{\"v\":-1.4540632381332866e-86}"
+    },
+    {
+      "json": "{\"v\":-1.4303019821814718e-45}",
+      "expected": "{\"v\":-1.4303019821814718e-45}"
+    },
+    {
+      "json": "{\"v\":-1.519776557187154e+124}",
+      "expected": "{\"v\":-1.519776557187154e+124}"
+    },
+    {
+      "json": "{\"v\":-3.9545972053698013e-200}",
+      "expected": "{\"v\":-3.9545972053698013e-200}"
+    },
+    {
+      "json": "{\"v\":1.173986064223925e+260}",
+      "expected": "{\"v\":1.173986064223925e+260}"
+    },
+    {
+      "json": "{\"v\":5.692876700894303e-225}",
+      "expected": "{\"v\":5.692876700894303e-225}"
+    },
+    {
+      "json": "{\"v\":-1.5995341806464237e-19}",
+      "expected": "{\"v\":-1.5995341806464237e-19}"
+    },
+    {
+      "json": "{\"v\":8.430598744263663e+174}",
+      "expected": "{\"v\":8.430598744263663e+174}"
+    },
+    {
+      "json": "{\"v\":9.052659155787005e-163}",
+      "expected": "{\"v\":9.052659155787005e-163}"
+    },
+    {
+      "json": "{\"v\":1.0437838266944888e+244}",
+      "expected": "{\"v\":1.0437838266944888e+244}"
+    },
+    {
+      "json": "{\"v\":-5.3527562788176836e-136}",
+      "expected": "{\"v\":-5.3527562788176836e-136}"
+    },
+    {
+      "json": "{\"v\":1.2826121523194557e+96}",
+      "expected": "{\"v\":1.2826121523194557e+96}"
+    },
+    {
+      "json": "{\"v\":-4.889557506317911e-81}",
+      "expected": "{\"v\":-4.889557506317911e-81}"
+    },
+    {
+      "json": "{\"v\":-5.450334922117826e-220}",
+      "expected": "{\"v\":-5.450334922117826e-220}"
+    },
+    {
+      "json": "{\"v\":1.3585447512805078e+265}",
+      "expected": "{\"v\":1.3585447512805078e+265}"
+    },
+    {
+      "json": "{\"v\":1.8258258223872193e+164}",
+      "expected": "{\"v\":1.8258258223872193e+164}"
+    },
+    {
+      "json": "{\"v\":4.452345265190019e-252}",
+      "expected": "{\"v\":4.452345265190019e-252}"
+    },
+    {
+      "json": "{\"v\":-9.131435323417127e-132}",
+      "expected": "{\"v\":-9.131435323417127e-132}"
+    },
+    {
+      "json": "{\"v\":-2.77709974743177e+80}",
+      "expected": "{\"v\":-2.77709974743177e+80}"
+    },
+    {
+      "json": "{\"v\":4.081592569108123e-40}",
+      "expected": "{\"v\":4.081592569108123e-40}"
+    },
+    {
+      "json": "{\"v\":-1.350469933050473e+158}",
+      "expected": "{\"v\":-1.350469933050473e+158}"
+    },
+    {
+      "json": "{\"v\":3.483082136313615e-36}",
+      "expected": "{\"v\":3.483082136313615e-36}"
+    },
+    {
+      "json": "{\"v\":8.83030265990894e+44}",
+      "expected": "{\"v\":8.83030265990894e+44}"
+    },
+    {
+      "json": "{\"v\":-1.5383437876963663e+121}",
+      "expected": "{\"v\":-1.5383437876963663e+121}"
+    }
+  ],
+  "normalization_regressions": {
+    "producer_core_sha256": "4b06053383607bf9aaf865824d14079904de75269ce712b3a566431c9ba7c747",
+    "cases": [
+      {
+        "plan": {
+          "version": 2,
+          "name": "equal-extents-mixed-numbers",
+          "coordinate_space": "logical",
+          "source": "producer normalization regression",
+          "origin": [
+            0,
+            0
+          ],
+          "logical_canvas": [
+            800,
+            1200.0
+          ],
+          "density": 1.0,
+          "master_pixels": [
+            800,
+            1200
+          ],
+          "generation": [
+            1280,
+            1920
+          ],
+          "safe_margin": 0.12,
+          "monitors": [
+            {
+              "id": "a-top",
+              "pixels": [
+                800,
+                600
+              ],
+              "logical": [
+                800,
+                600
+              ],
+              "x": 0,
+              "y": 0,
+              "density": 1.0,
+              "crop_box": [
+                0,
+                0,
+                800,
+                600
+              ],
+              "normalized_box": [
+                0.0,
+                0.0,
+                1.0,
+                0.5
+              ],
+              "safe_box": [
+                96,
+                72,
+                704,
+                528
+              ]
+            },
+            {
+              "id": "b-bottom",
+              "pixels": [
+                800,
+                600
+              ],
+              "logical": [
+                800.0,
+                600.0
+              ],
+              "x": 0.0,
+              "y": 600,
+              "density": 1.0,
+              "crop_box": [
+                0,
+                600,
+                800,
+                1200
+              ],
+              "normalized_box": [
+                0.0,
+                0.5,
+                1.0,
+                1.0
+              ],
+              "safe_box": [
+                96,
+                672,
+                704,
+                1128
+              ]
+            }
+          ],
+          "note": "Raster sizes are upright/oriented. No additional rotation is applied. Logical alignment is not physical bezel/DPI calibration."
+        },
+        "canonical": "{\"coordinate_space\":\"logical\",\"density\":1.0,\"generation\":[1280,1920],\"logical_canvas\":[800,1200.0],\"master_pixels\":[800,1200],\"monitors\":[{\"crop_box\":[0,0,800,600],\"density\":1.0,\"id\":\"a-top\",\"logical\":[800,600],\"normalized_box\":[0.0,0.0,1.0,0.5],\"pixels\":[800,600],\"safe_box\":[96,72,704,528],\"x\":0,\"y\":0},{\"crop_box\":[0,600,800,1200],\"density\":1.0,\"id\":\"b-bottom\",\"logical\":[800.0,600.0],\"normalized_box\":[0.0,0.5,1.0,1.0],\"pixels\":[800,600],\"safe_box\":[96,672,704,1128],\"x\":0.0,\"y\":600}],\"name\":\"equal-extents-mixed-numbers\",\"note\":\"Raster sizes are upright/oriented. No additional rotation is applied. Logical alignment is not physical bezel/DPI calibration.\",\"origin\":[0,0],\"safe_margin\":0.12,\"source\":\"producer normalization regression\",\"version\":2}",
+        "fingerprint": "e97933ac2b34ca5f5616a3c78d264561e6da7ec185d241a79cc5ec2723b62b68"
+      },
+      {
+        "plan": {
+          "version": 2,
+          "name": "signed-zero-x-order",
+          "coordinate_space": "logical",
+          "source": "producer normalization regression",
+          "origin": [
+            0.0,
+            0
+          ],
+          "logical_canvas": [
+            800.0,
+            1200.0
+          ],
+          "density": 1.0,
+          "master_pixels": [
+            800,
+            1200
+          ],
+          "generation": [
+            1280,
+            1920
+          ],
+          "safe_margin": 0.12,
+          "monitors": [
+            {
+              "id": "a-top",
+              "pixels": [
+                800,
+                600
+              ],
+              "logical": [
+                800,
+                600
+              ],
+              "x": 0.0,
+              "y": 0,
+              "density": 1.0,
+              "crop_box": [
+                0,
+                0,
+                800,
+                600
+              ],
+              "normalized_box": [
+                0.0,
+                0.0,
+                1.0,
+                0.5
+              ],
+              "safe_box": [
+                96,
+                72,
+                704,
+                528
+              ]
+            },
+            {
+              "id": "z-bottom",
+              "pixels": [
+                800,
+                600
+              ],
+              "logical": [
+                800.0,
+                600.0
+              ],
+              "x": -0.0,
+              "y": 600,
+              "density": 1.0,
+              "crop_box": [
+                0,
+                600,
+                800,
+                1200
+              ],
+              "normalized_box": [
+                -0.0,
+                0.5,
+                1.0,
+                1.0
+              ],
+              "safe_box": [
+                96,
+                672,
+                704,
+                1128
+              ]
+            }
+          ],
+          "note": "Raster sizes are upright/oriented. No additional rotation is applied. Logical alignment is not physical bezel/DPI calibration."
+        },
+        "canonical": "{\"coordinate_space\":\"logical\",\"density\":1.0,\"generation\":[1280,1920],\"logical_canvas\":[800.0,1200.0],\"master_pixels\":[800,1200],\"monitors\":[{\"crop_box\":[0,0,800,600],\"density\":1.0,\"id\":\"a-top\",\"logical\":[800,600],\"normalized_box\":[0.0,0.0,1.0,0.5],\"pixels\":[800,600],\"safe_box\":[96,72,704,528],\"x\":0.0,\"y\":0},{\"crop_box\":[0,600,800,1200],\"density\":1.0,\"id\":\"z-bottom\",\"logical\":[800.0,600.0],\"normalized_box\":[-0.0,0.5,1.0,1.0],\"pixels\":[800,600],\"safe_box\":[96,672,704,1128],\"x\":-0.0,\"y\":600}],\"name\":\"signed-zero-x-order\",\"note\":\"Raster sizes are upright/oriented. No additional rotation is applied. Logical alignment is not physical bezel/DPI calibration.\",\"origin\":[0.0,0],\"safe_margin\":0.12,\"source\":\"producer normalization regression\",\"version\":2}",
+        "fingerprint": "822875599c4df0bf2385fd0bfd6e306a677da38f01b885a136ad86fc3e52bfad"
+      },
+      {
+        "plan": {
+          "version": 2,
+          "name": "signed-zero-y-origin",
+          "coordinate_space": "logical",
+          "source": "producer normalization regression",
+          "origin": [
+            0,
+            0.0
+          ],
+          "logical_canvas": [
+            1600.0,
+            600.0
+          ],
+          "density": 1.0,
+          "master_pixels": [
+            1600,
+            600
+          ],
+          "generation": [
+            2560,
+            960
+          ],
+          "safe_margin": 0.12,
+          "monitors": [
+            {
+              "id": "a-left",
+              "pixels": [
+                800,
+                600
+              ],
+              "logical": [
+                800,
+                600
+              ],
+              "x": 0,
+              "y": 0.0,
+              "density": 1.0,
+              "crop_box": [
+                0,
+                0,
+                800,
+                600
+              ],
+              "normalized_box": [
+                0.0,
+                0.0,
+                0.5,
+                1.0
+              ],
+              "safe_box": [
+                96,
+                72,
+                704,
+                528
+              ]
+            },
+            {
+              "id": "z-right",
+              "pixels": [
+                800,
+                600
+              ],
+              "logical": [
+                800.0,
+                600.0
+              ],
+              "x": 800.0,
+              "y": -0.0,
+              "density": 1.0,
+              "crop_box": [
+                800,
+                0,
+                1600,
+                600
+              ],
+              "normalized_box": [
+                0.5,
+                -0.0,
+                1.0,
+                1.0
+              ],
+              "safe_box": [
+                896,
+                72,
+                1504,
+                528
+              ]
+            }
+          ],
+          "note": "Raster sizes are upright/oriented. No additional rotation is applied. Logical alignment is not physical bezel/DPI calibration."
+        },
+        "canonical": "{\"coordinate_space\":\"logical\",\"density\":1.0,\"generation\":[2560,960],\"logical_canvas\":[1600.0,600.0],\"master_pixels\":[1600,600],\"monitors\":[{\"crop_box\":[0,0,800,600],\"density\":1.0,\"id\":\"a-left\",\"logical\":[800,600],\"normalized_box\":[0.0,0.0,0.5,1.0],\"pixels\":[800,600],\"safe_box\":[96,72,704,528],\"x\":0,\"y\":0.0},{\"crop_box\":[800,0,1600,600],\"density\":1.0,\"id\":\"z-right\",\"logical\":[800.0,600.0],\"normalized_box\":[0.5,-0.0,1.0,1.0],\"pixels\":[800,600],\"safe_box\":[896,72,1504,528],\"x\":800.0,\"y\":-0.0}],\"name\":\"signed-zero-y-origin\",\"note\":\"Raster sizes are upright/oriented. No additional rotation is applied. Logical alignment is not physical bezel/DPI calibration.\",\"origin\":[0,0.0],\"safe_margin\":0.12,\"source\":\"producer normalization regression\",\"version\":2}",
+        "fingerprint": "c128dd37d287d9986b43427dbfcdffcb3e79b42ec00249d3ce593d5b7ecdbed2"
+      }
+    ]
+  },
+  "exact_integer_metadata": {
+    "producer_revision": "a363468dce3c1399c01d20bda9ed6d95c33a7426",
+    "producer_core_sha256": "4547ede7289eaa89c2280affe19c0671f813571ce9817c8c9c422a4a0a927d57",
+    "plan": {
+      "version": 2,
+      "name": "nested-scene-test",
+      "coordinate_space": "logical",
+      "source": "synthetic fixed virtual outputs",
+      "origin": [
+        0,
+        0
+      ],
+      "logical_canvas": [
+        1600,
+        600
+      ],
+      "density": 1.0,
+      "master_pixels": [
+        1600,
+        600
+      ],
+      "generation": [
+        1152,
+        432
+      ],
+      "safe_margin": 0.12,
+      "monitors": [
+        {
+          "id": "left",
+          "pixels": [
+            800,
+            600
+          ],
+          "logical": [
+            800,
+            600
+          ],
+          "x": 0,
+          "y": 0,
+          "density": 1.0,
+          "crop_box": [
+            0,
+            0,
+            800,
+            600
+          ],
+          "normalized_box": [
+            0.0,
+            0.0,
+            0.5,
+            1.0
+          ],
+          "safe_box": [
+            96,
+            72,
+            704,
+            528
+          ],
+          "opaque_integer": 1267650600228229401496703205376
+        },
+        {
+          "id": "right",
+          "pixels": [
+            800,
+            600
+          ],
+          "logical": [
+            800,
+            600
+          ],
+          "x": 800,
+          "y": 0,
+          "density": 1.0,
+          "crop_box": [
+            800,
+            0,
+            1600,
+            600
+          ],
+          "normalized_box": [
+            0.5,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "safe_box": [
+            896,
+            72,
+            1504,
+            528
+          ]
+        }
+      ],
+      "note": "Raster sizes are upright/oriented. No additional rotation is applied. Logical alignment is not physical bezel/DPI calibration."
+    },
+    "canonical": "{\"coordinate_space\":\"logical\",\"density\":1.0,\"generation\":[1152,432],\"logical_canvas\":[1600,600],\"master_pixels\":[1600,600],\"monitors\":[{\"crop_box\":[0,0,800,600],\"density\":1.0,\"id\":\"left\",\"logical\":[800,600],\"normalized_box\":[0.0,0.0,0.5,1.0],\"opaque_integer\":1267650600228229401496703205376,\"pixels\":[800,600],\"safe_box\":[96,72,704,528],\"x\":0,\"y\":0},{\"crop_box\":[800,0,1600,600],\"density\":1.0,\"id\":\"right\",\"logical\":[800,600],\"normalized_box\":[0.5,0.0,1.0,1.0],\"pixels\":[800,600],\"safe_box\":[896,72,1504,528],\"x\":800,\"y\":0}],\"name\":\"nested-scene-test\",\"note\":\"Raster sizes are upright/oriented. No additional rotation is applied. Logical alignment is not physical bezel/DPI calibration.\",\"origin\":[0,0],\"safe_margin\":0.12,\"source\":\"synthetic fixed virtual outputs\",\"version\":2}",
+    "fingerprint": "dde50f791e5ee1c752bea7e48dacf0a1c4d3035073a68cdda04da825cc2c24b2"
+  }
+}
