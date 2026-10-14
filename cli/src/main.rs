@@ -3,7 +3,7 @@ mod opts;
 use std::{
     io::{Read, Write},
     os::unix::net::UnixStream,
-    path::PathBuf,
+    path::{Component, PathBuf},
     time::Duration,
 };
 
@@ -21,6 +21,38 @@ fn unquote(s: String) -> String {
     }
 }
 
+/// Folds `.` and `..` lexically so the daemon receives only the normal components its package
+/// loader accepts. A `..` never folds across a symlink: the kernel would resolve it differently,
+/// and folding would skip the loader's no-follow check on that component. `fs::canonicalize` is
+/// not used because it resolves the symlinks the loader rejects.
+fn lexical_scene_path(path: PathBuf) -> Result<PathBuf, String> {
+    let mut folded = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match folded.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    let metadata = std::fs::symlink_metadata(&folded)
+                        .map_err(|error| format!("{}: {error}", folded.display()))?;
+                    if metadata.file_type().is_symlink() {
+                        return Err(format!(
+                            "{} is a symlink followed by `..`",
+                            folded.display()
+                        ));
+                    }
+                    folded.pop();
+                }
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                Some(Component::ParentDir | Component::CurDir) | None => {
+                    folded.push(Component::ParentDir)
+                }
+            },
+            other => folded.push(other),
+        }
+    }
+    Ok(folded)
+}
+
 fn main() {
     let args = Opts::parse();
 
@@ -32,7 +64,7 @@ fn main() {
                 path,
                 reduced_motion,
             } => IpcMessage::StartScene {
-                path: if path.is_absolute() {
+                path: lexical_scene_path(if path.is_absolute() {
                     path
                 } else {
                     std::env::current_dir()
@@ -41,7 +73,11 @@ fn main() {
                             std::process::exit(1);
                         })
                         .join(path)
-                },
+                })
+                .unwrap_or_else(|error| {
+                    eprintln!("Cannot resolve scene path: {error}");
+                    std::process::exit(1);
+                }),
                 reduced_motion,
             },
             SceneCommand::Shuffle => IpcMessage::ShuffleScene,
@@ -231,5 +267,53 @@ fn main() {
             }
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lexical_scene_path;
+    use std::path::PathBuf;
+
+    fn temp_base(label: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "wpaperctl-scene-path-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&base).unwrap();
+        base
+    }
+
+    #[test]
+    fn scene_paths_fold_dot_components() {
+        for (input, expected) in [("/a/./b", "/a/b"), ("/..", "/")] {
+            assert_eq!(
+                lexical_scene_path(PathBuf::from(input)),
+                Ok(PathBuf::from(expected))
+            );
+        }
+        // Each popped component is lstat'd, so `/a/b/../c` folds only when `/a/b` exists.
+        assert!(lexical_scene_path(PathBuf::from("/a/b/../c")).is_err());
+        let base = temp_base("fold");
+        std::fs::create_dir_all(base.join("a/b")).unwrap();
+        let folded = lexical_scene_path(base.join("a/b/../c"));
+        std::fs::remove_dir_all(&base).unwrap();
+        assert_eq!(folded, Ok(base.join("a/c")));
+    }
+
+    #[test]
+    fn scene_paths_do_not_fold_parent_across_symlinks() {
+        let base = temp_base("symlink");
+        std::fs::create_dir(base.join("real")).unwrap();
+        std::os::unix::fs::symlink(base.join("real"), base.join("link")).unwrap();
+        let through_link = lexical_scene_path(base.join("link/../real"));
+        let through_dir = lexical_scene_path(base.join("real/../real"));
+        std::fs::remove_dir_all(&base).unwrap();
+        assert!(through_link.is_err());
+        assert_eq!(through_dir, Ok(base.join("real")));
     }
 }
