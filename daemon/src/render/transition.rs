@@ -277,3 +277,48 @@ transition_shader! {
         WindowBlinds {} => 1500
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::Path};
+
+    /// Static guard for the fragment prelude contract in `shader.rs`: it declares
+    /// `precision highp float;` and the prototype `vec4 transition(vec2);`. A shader that
+    /// changes the default float precision or defines another signature fails to compile or
+    /// link on Mesa, and the renderer then silently keeps the previous program.
+    #[test]
+    fn shaders_match_the_fragment_prelude_contract() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/render/shaders");
+        let signature = regex::Regex::new(r"vec4\s+transition\s*\(([^)]*)\)\s*\{").unwrap();
+        let single_vec2 = regex::Regex::new(r"^\s*vec2\s+\w+\s*$").unwrap();
+        let mut checked = 0;
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|ext| ext != "glsl") {
+                continue;
+            }
+            let source = fs::read_to_string(&path).unwrap();
+            let code: String = source
+                .lines()
+                .map(|line| line.split("//").next().unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let name = path.file_name().unwrap().to_string_lossy();
+            assert!(
+                !code
+                    .lines()
+                    .any(|line| line.trim_start().starts_with("precision")),
+                "{name} overrides the prelude's default precision"
+            );
+            let definitions: Vec<_> = signature.captures_iter(&code).collect();
+            assert_eq!(definitions.len(), 1, "{name} must define transition() once");
+            assert!(
+                single_vec2.is_match(&definitions[0][1]),
+                "{name} must define `vec4 transition(vec2 uv)`, found `({})`",
+                &definitions[0][1]
+            );
+            checked += 1;
+        }
+        assert!(checked > 0, "no shaders found in {}", dir.display());
+    }
+}
