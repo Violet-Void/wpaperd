@@ -220,7 +220,8 @@ belongs to [wpaperd #2](https://github.com/Violet-Void/wpaperd/issues/2).
 `--scenario transition-reload` runs a separate still-wallpaper check on four private outputs. It
 starts a 6 s transition on every output with one `wpaperctl next`, rewrites the
 `[default.transition.*]` table in place while those transitions run, and requires each output to
-settle on its exact new solid colour. Before the fix for a transition program swap that dropped the
+show its exact new solid colour before the 6 s would elapse (only an applied reload ends the
+transition early) and after it settles. Before the fix for a transition program swap that dropped the
 mode uniforms, every output settled on a flat 25% frame while `get-status` reported `running`.
 
 ```bash

@@ -648,14 +648,20 @@ def transition_reload(args):
             with config.open("r+") as stream:
                 stream.write(config_text(RELOAD_TRANSITIONS[step]))
                 stream.flush()
-            time.sleep(6.5)
+            # Applying the reload ends the transitions early. At ~4.3 s an unapplied 6 s
+            # transition is still mid-way, so an exact frame here proves the swap happened.
+            time.sleep(3.8)
             label = "round-" + str(step)
-            ok = settled(label, RELOAD_COLORS[step % len(RELOAD_COLORS)])
+            color = RELOAD_COLORS[step % len(RELOAD_COLORS)]
+            applied = settled(label + "-applied", color)
+            time.sleep(2.7)
+            drawn = settled(label, color)
             result["rounds"].append({"round": step, "transition": RELOAD_TRANSITIONS[step],
-                                     "drawn": ok})
+                                     "applied": applied, "drawn": drawn})
         status = json.loads(cli("status", "--json"))
         result["status"] = [s.get("status") for s in status]
         assert all(r["drawn"] for r in result["rounds"]), "Output left undrawn after reload"
+        assert all(r["applied"] for r in result["rounds"]), "Reload not applied mid-transition"
         assert daemon.poll() is None, "Daemon exited during transition reloads"
         text = (root / "daemon.log").read_text(errors="replace")
         marker = re.search(r"\b(?:ERROR|WARN|WARNING|panicked)\b|protocol\s+error|failed\s+to\s+draw",
