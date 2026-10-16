@@ -224,10 +224,22 @@ impl EglContext {
         // See https://registry.khronos.org/EGL/specs/eglspec.1.5.pdf
         self.swap_buffers().wrap_err("Failed to swap EGL buffers")
     }
+
+    pub fn draw_scene(&mut self, frame: &crate::scene::Frame, display: &DisplayInfo) -> Result<()> {
+        self.renderer.draw_scene(frame, display)?;
+        self.renderer.clear_after_draw()?;
+        self.swap_buffers()
+    }
 }
 
 impl Drop for EglContext {
     fn drop(&mut self) {
+        // Never bind here: no GL destructor may run against another output's current context,
+        // and binding the dying surface right before destroy_surface reproduces the NVIDIA
+        // 575.64+ implicit-release bug described on resize/draw (the next swap on another output
+        // can fail with EGL_BAD_SURFACE). This context is unshared, so destroying it by name
+        // reclaims every GL handle; disarming only stops later GL calls. Rust allocations drop.
+        self.renderer.disarm_resources();
         if let Err(err) = egl.destroy_surface(self.display, self.surface) {
             warn!(
                 "{:?}",
