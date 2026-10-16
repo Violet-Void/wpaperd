@@ -626,6 +626,10 @@ impl ConfigWatcher {
 
 /// Opening or reading the configuration must not schedule another reload.
 fn is_config_event(event: &Event, targets: &[PathBuf]) -> bool {
+    // An inotify queue overflow carries no paths; the config may have changed.
+    if event.need_rescan() {
+        return true;
+    }
     let relevant_kind = match event.kind {
         EventKind::Access(kind) => kind == AccessKind::Close(AccessMode::Write),
         _ => true,
@@ -827,9 +831,13 @@ mod reload_tests {
     /// The debouncer expires each event on its own timestamp, so one save can arrive as
     /// two batches a tick apart. A duplicate must re-read an identical file and not redraw.
     fn settle(watch: &mut Watch, config: &mut Config, step: &str) {
-        sleep(DEBOUNCE);
-        if watch.take_change() {
-            assert!(!config.update(), "duplicate event redrew after: {step}");
+        let mut quiet_since = Instant::now();
+        while quiet_since.elapsed() < DEBOUNCE * 2 {
+            sleep(Duration::from_millis(20));
+            if watch.take_change() {
+                assert!(!config.update(), "duplicate event redrew after: {step}");
+                quiet_since = Instant::now();
+            }
         }
     }
 
@@ -964,5 +972,9 @@ mod reload_tests {
         write_in_place(&target1, &content(6));
         assert_quiet(&mut watch, "edit of previous target");
         assert_eq!(duration(&config), Some(Duration::from_secs(21)));
+
+        // The watcher is still alive for the new target.
+        replace_atomically(&target2, &content(22));
+        expect_reload(&mut watch, &mut config, 22, "replace of new target");
     }
 }
