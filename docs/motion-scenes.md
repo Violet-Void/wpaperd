@@ -229,6 +229,38 @@ mode uniforms, every output settled on a flat 25% frame while `get-status` repor
 /usr/bin/python3 tests/nested_wayland_scene.py --binaries target/debug --scenario transition-reload
 ```
 
+Three pool scenarios check [wpaperd #2](https://github.com/Violet-Void/wpaperd/issues/2) on four
+private outputs. Each one changes the configured pool by saving the config in place, then reads
+`get`, `status --json` and per-output captures. Every image has a unique solid colour.
+
+- `pause-reload` pauses two outputs and leaves two running. After an A to B pool change, every
+  output shows a B image. Paused outputs keep `paused` and their exact held `duration_left`.
+  They do not advance for longer than their period, while running outputs do. `next` and
+  `previous` stay in B and do not lift the pause.
+- `set-reload` follows dotfiles `wallpaper-cache-sync` activation:
+  1. Pause every output.
+  2. Set a unique image on each of three outputs.
+  3. Reload into pool C. An unset paused control output adopts C, which signals that the
+     reload was applied.
+  4. Check that the forced images survive the reload and later load passes.
+  5. Check that `next` and `previous` stay in C.
+  6. Set final images, and check that they hold.
+  7. Resume, and check that status is `running` again.
+- `group-set-reload` puts three outputs in group 1. A `set` on a grouped output holds only until
+  any output decodes an image. That load pass returns the group's shared image. The behavior
+  predates #2: it also occurs on `2cde3d9` and upstream `483225a`. The scenario pins it as
+  parity, then checks that the reload and navigation keep the group on one image in the new
+  pool. Distinct per-output sets inside one group depend on timing, so they are not asserted.
+
+```bash
+/usr/bin/python3 tests/nested_wayland_scene.py --binaries target/release --scenario pause-reload
+```
+
+On 2026-10-16, release builds ran under KWin 6.8.0 with software EGL. On `main` `c397225`, all
+three scenarios passed repeatedly. On the pre-#13 baseline `2cde3d9`, each failed at pool
+adoption. Paused outputs stayed on pool A, and the set and group controls never left pool B.
+Grouped set parity matched on both revisions.
+
 The 2026-10-13 software-EGL run on KWin 6.7.5 passed: both initial master crops had zero channel
 error against Pillow, translucent solid/asset backgrounds had maximum channel error one, and
 static/frozen idle requested zero frames. Orbit requested 218 callbacks across both outputs;
