@@ -217,6 +217,16 @@ configurations, including the current image/link, status and ordinary Previous b
 Existing still detour bookkeeping is compared against a no-scene control; its separate maintenance
 belongs to [wpaperd #2](https://github.com/Violet-Void/wpaperd/issues/2).
 
+`--scenario transition-reload` runs a separate still-wallpaper check on four private outputs. It
+starts a 6 s transition on every output with one `wpaperctl next`, rewrites the
+`[default.transition.*]` table in place while those transitions run, and requires each output to
+settle on its exact new solid colour. Before the fix for a transition program swap that dropped the
+mode uniforms, every output settled on a flat 25% frame while `get-status` reported `running`.
+
+```bash
+/usr/bin/python3 tests/nested_wayland_scene.py --binaries target/debug --scenario transition-reload
+```
+
 The 2026-10-13 software-EGL run on KWin 6.7.5 passed: both initial master crops had zero channel
 error against Pillow, translucent solid/asset backgrounds had maximum channel error one, and
 static/frozen idle requested zero frames. Orbit requested 218 callbacks across both outputs;

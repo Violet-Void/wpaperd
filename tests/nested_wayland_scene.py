@@ -2,6 +2,7 @@
 """Exercise scene IPC/rendering on two private KWin virtual outputs.
 
 Run with /usr/bin/python3 tests/nested_wayland_scene.py --binaries target/debug.
+--scenario transition-reload instead checks still transitions reloaded on four outputs.
 Needs kwin_wayland, dbus-run-session, python-dbus, Pillow and PySide6.QtGui.
 Uses synthetic assets, private HOME/XDG directories and a private session bus.
 Does not exercise physical hotplug, host services or desktop rollout.
@@ -148,10 +149,64 @@ def stop_owned(process):
         process.wait(timeout=3)
 
 
-def inside(args):
+def start_kwin(log, output_count):
+    """Start private KWin with 800x600 virtual outputs Virtual-0..Virtual-N."""
+    env = dict(os.environ, KWIN_SCREENSHOT_NO_PERMISSION_CHECKS="1")
+    compositor = subprocess.Popen([
+        "kwin_wayland", "--virtual", "--socket", "wpaperd-scene-test", "--width", "800",
+        "--height", "600", "--output-count", str(output_count), "--no-lockscreen", "--no-kactivities",
+        "--no-global-shortcuts"], env=env, stdout=log, stderr=subprocess.STDOUT,
+        start_new_session=True)
+    return compositor
+
+
+def kwin_capture(root, compositor):
+    """Wait for the private KWin capture service and return a per-output RGB capture."""
     import dbus
     from PIL import Image
     from PySide6.QtGui import QImage
+    bus = dbus.SessionBus()
+    deadline = time.monotonic() + 12
+    while not bus.name_has_owner("org.kde.KWin.ScreenShot2"):
+        assert compositor.poll() is None, "Private KWin exited"
+        assert time.monotonic() < deadline, "Private KWin capture service unavailable"
+        time.sleep(.1)
+    capture = dbus.Interface(bus.get_object("org.kde.KWin.ScreenShot2", "/org/kde/KWin/ScreenShot2"),
+                             "org.kde.KWin.ScreenShot2")
+
+    def shot(label, output=0):
+        read_fd, write_fd = os.pipe()
+        try:
+            meta = capture.CaptureScreen("Virtual-" + str(output),
+                                         dbus.Dictionary({}, signature="sv"),
+                                         dbus.types.UnixFd(write_fd), timeout=10)
+            os.close(write_fd)
+            write_fd = None
+            expected = int(meta["stride"]) * int(meta["height"])
+            assert 0 < expected <= 8_000_000
+            data = bytearray()
+            deadline = time.monotonic() + 10
+            while len(data) < expected:
+                remaining = deadline - time.monotonic()
+                assert remaining > 0 and select.select([read_fd], [], [], remaining)[0], "Capture timeout"
+                chunk = os.read(read_fd, min(65536, expected - len(data)))
+                assert chunk, "Capture truncated"
+                data.extend(chunk)
+            image = QImage(bytes(data), int(meta["width"]), int(meta["height"]),
+                           int(meta["stride"]), QImage.Format(int(meta["format"])))
+            path = root / (label + ".png")
+            assert image.save(str(path)), "Capture save failed"
+            return Image.open(path).convert("RGB")
+        finally:
+            os.close(read_fd)
+            if write_fd is not None:
+                os.close(write_fd)
+
+    return shot
+
+
+def inside(args):
+    from PIL import Image
     root = args.inside
     def interrupted(signum, frame):
         raise SystemExit("Private test interrupted")
@@ -161,48 +216,8 @@ def inside(args):
     result = {"passed": False, "evidence": str(root)}
     commands = open(root / "commands.log", "w")
     try:
-        env = dict(os.environ, KWIN_SCREENSHOT_NO_PERMISSION_CHECKS="1")
-        compositor = subprocess.Popen([
-            "kwin_wayland", "--virtual", "--socket", "wpaperd-scene-test", "--width", "800",
-            "--height", "600", "--output-count", "2", "--no-lockscreen", "--no-kactivities",
-            "--no-global-shortcuts"], env=env, stdout=logs[0], stderr=subprocess.STDOUT,
-            start_new_session=True)
-        bus = dbus.SessionBus()
-        deadline = time.monotonic() + 12
-        while not bus.name_has_owner("org.kde.KWin.ScreenShot2"):
-            assert compositor.poll() is None, "Private KWin exited"
-            assert time.monotonic() < deadline, "Private KWin capture service unavailable"
-            time.sleep(.1)
-        capture = dbus.Interface(bus.get_object("org.kde.KWin.ScreenShot2", "/org/kde/KWin/ScreenShot2"),
-                                 "org.kde.KWin.ScreenShot2")
-
-        def shot(label, output=0):
-            read_fd, write_fd = os.pipe()
-            try:
-                meta = capture.CaptureScreen("Virtual-" + str(output),
-                                             dbus.Dictionary({}, signature="sv"),
-                                             dbus.types.UnixFd(write_fd), timeout=10)
-                os.close(write_fd)
-                write_fd = None
-                expected = int(meta["stride"]) * int(meta["height"])
-                assert 0 < expected <= 8_000_000
-                data = bytearray()
-                deadline = time.monotonic() + 10
-                while len(data) < expected:
-                    remaining = deadline - time.monotonic()
-                    assert remaining > 0 and select.select([read_fd], [], [], remaining)[0], "Capture timeout"
-                    chunk = os.read(read_fd, min(65536, expected - len(data)))
-                    assert chunk, "Capture truncated"
-                    data.extend(chunk)
-                image = QImage(bytes(data), int(meta["width"]), int(meta["height"]),
-                               int(meta["stride"]), QImage.Format(int(meta["format"])))
-                path = root / (label + ".png")
-                assert image.save(str(path)), "Capture save failed"
-                return Image.open(path).convert("RGB")
-            finally:
-                os.close(read_fd)
-                if write_fd is not None:
-                    os.close(write_fd)
+        compositor = start_kwin(logs[0], 2)
+        shot = kwin_capture(root, compositor)
 
         still = root / "still.png"
         Image.new("RGBA", (800, 600), (41, 49, 63, 255)).save(still)
@@ -560,19 +575,118 @@ def inside(args):
     print(json.dumps(result, indent=2))
 
 
+RELOAD_OUTPUTS = 4
+RELOAD_COLORS = [(230, 120, 40), (40, 200, 120), (60, 110, 240)]
+RELOAD_TRANSITIONS = ["fade", "directional", "circle-open", "circle"]
+
+
+def transition_reload(args):
+    """Rewrite the transition table while every output runs a simultaneous transition.
+
+    This mirrors an exec hook that edits config.toml on wallpaper changes. Every output must
+    settle on its exact new solid colour instead of a flat dark frame.
+    """
+    from PIL import Image
+    root = args.inside
+    def interrupted(signum, frame):
+        raise SystemExit("Private test interrupted")
+    signal.signal(signal.SIGTERM, interrupted)
+    logs = [open(root / name, "wb") for name in ("compositor.log", "daemon.log")]
+    compositor = daemon = None
+    result = {"scenario": "transition-reload", "passed": False, "evidence": str(root)}
+    commands = open(root / "commands.log", "w")
+    try:
+        compositor = start_kwin(logs[0], RELOAD_OUTPUTS)
+        shot = kwin_capture(root, compositor)
+        pool = root / "pool"
+        pool.mkdir()
+        for i, color in enumerate(RELOAD_COLORS):
+            Image.new("RGBA", (800, 600), (*color, 255)).save(pool / (str(i) + ".png"))
+        config = root / "config.toml"
+
+        def config_text(transition):
+            return ('[default]\npath=' + json.dumps(str(pool)) + '\nmode="stretch"\n'
+                    'sorting="ascending"\ntransition-time=6000\ninitial-transition=false\n'
+                    '[default.transition.' + transition + ']\n').ljust(4096)
+
+        config.write_text(config_text(RELOAD_TRANSITIONS[0]))
+        daemon = subprocess.Popen([str(args.binaries / "wpaperd"), "--config", str(config), "--verbose"],
+                                  stdout=logs[1], stderr=subprocess.STDOUT, start_new_session=True)
+        deadline = time.monotonic() + 15
+        socket = Path(os.environ["XDG_RUNTIME_DIR"]) / "wpaperd.sock"
+        while not socket.exists():
+            assert daemon.poll() is None, "Private daemon exited before IPC readiness"
+            assert time.monotonic() < deadline, "Daemon IPC timeout"
+            time.sleep(.1)
+
+        def cli(*values):
+            proc = subprocess.run([str(args.binaries / "wpaperctl"), *map(str, values)],
+                                  capture_output=True, text=True, timeout=10)
+            commands.write(json.dumps({"args": list(map(str, values)), "exit": proc.returncode,
+                                       "stdout": proc.stdout, "stderr": proc.stderr}) + "\n")
+            commands.flush()
+            assert proc.returncode == 0, proc.stderr + proc.stdout
+            return proc.stdout
+
+        def settled(label, color):
+            observed = {}
+            for output in range(RELOAD_OUTPUTS):
+                image = shot(label + "-" + str(output), output)
+                colors = sorted(c for _, c in image.getcolors(1 << 20))
+                observed["Virtual-" + str(output)] = colors[:4]
+            result[label] = observed
+            return all(c == [color] for c in observed.values())
+
+        time.sleep(1)
+        assert settled("initial", RELOAD_COLORS[0]), result["initial"]
+        result["rounds"] = []
+        for step in range(1, 4):
+            # One IPC call starts a transition on every output at the same moment.
+            cli("next")
+            time.sleep(.5)
+            # Rewrite the table in place; hotwatch delivers it about 2 s later, mid-transition.
+            with config.open("r+") as stream:
+                stream.write(config_text(RELOAD_TRANSITIONS[step]))
+                stream.flush()
+            time.sleep(6.5)
+            label = "round-" + str(step)
+            ok = settled(label, RELOAD_COLORS[step % len(RELOAD_COLORS)])
+            result["rounds"].append({"round": step, "transition": RELOAD_TRANSITIONS[step],
+                                     "drawn": ok})
+        status = json.loads(cli("status", "--json"))
+        result["status"] = [s.get("status") for s in status]
+        assert all(r["drawn"] for r in result["rounds"]), "Output left undrawn after reload"
+        assert daemon.poll() is None, "Daemon exited during transition reloads"
+        text = (root / "daemon.log").read_text(errors="replace")
+        marker = re.search(r"\b(?:ERROR|WARN|WARNING|panicked)\b|protocol\s+error|failed\s+to\s+draw",
+                           text, re.IGNORECASE)
+        assert marker is None, "Fresh daemon log error: " + marker.group(0)
+        result["passed"] = True
+    finally:
+        stop_owned(daemon)
+        stop_owned(compositor)
+        for log in logs:
+            log.close()
+        commands.close()
+        write_json(root / "result.json", result)
+    print(json.dumps(result, indent=2))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binaries", type=Path, default=Path("target/debug"))
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument("--producer-package", type=Path,
                         help="Published bundle for the exact two-output nested layout; copied only")
+    parser.add_argument("--scenario", choices=("scene", "transition-reload"), default="scene",
+                        help="transition-reload rewrites transitions during four-output changes")
     parser.add_argument("--inside", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     args.binaries, args.repo = args.binaries.resolve(), args.repo.resolve()
     if args.producer_package:
         args.producer_package = args.producer_package.resolve()
     if args.inside:
-        inside(args)
+        (transition_reload if args.scenario == "transition-reload" else inside)(args)
         return
     for tool in ("kwin_wayland", "dbus-run-session"):
         assert shutil.which(tool), "Missing dependency: " + tool
@@ -588,7 +702,8 @@ def main():
            "QT_QPA_PLATFORM": "offscreen"}
     print("Private evidence: " + str(root), flush=True)
     command = ["dbus-run-session", "/usr/bin/python3", str(Path(__file__).resolve()),
-               "--binaries", str(args.binaries), "--repo", str(args.repo), "--inside", str(root)]
+               "--binaries", str(args.binaries), "--repo", str(args.repo), "--inside", str(root),
+               "--scenario", args.scenario]
     if args.producer_package:
         command += ["--producer-package", str(args.producer_package)]
     process = subprocess.Popen(command, env=env, start_new_session=True)
