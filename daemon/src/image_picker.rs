@@ -400,9 +400,6 @@ impl ImagePicker {
             return Some(ImageResult::Forced(forced_path));
         }
 
-        // Clear flag for normal image loads
-        self.was_last_forced = false;
-
         if path.is_dir() {
             let files = self
                 .filelist_cache
@@ -447,6 +444,9 @@ impl ImagePicker {
                 path: img_path,
                 index,
             } => {
+                // A list image replaces the detour. An idle load pass that picks nothing new
+                // must not clear it.
+                self.was_last_forced = false;
                 match (self.actions.pop_front(), &mut self.sorting) {
                     (Some(ImagePickerAction::Next), ImagePickerSorting::Random(queue)) => {
                         queue.push(img_path.clone());
@@ -621,14 +621,6 @@ impl ImagePicker {
                         shared.queue = queue;
                     }
                 }
-                (_, Sorting::GroupedRandom { group }) if path_changed => {
-                    self.sorting = ImagePickerSorting::GroupedRandom(GroupedRandom::new(
-                        wallpaper_groups.clone(),
-                        group,
-                        wl_surface,
-                        wallpaper_info.drawn_images_queue_size,
-                    ));
-                }
                 (_, Sorting::GroupedRandom { group }) => {
                     let grouped_random = GroupedRandom::new(
                         wallpaper_groups.clone(),
@@ -638,10 +630,19 @@ impl ImagePicker {
                     );
 
                     let mut group = grouped_random.group.borrow_mut();
-                    // If there are no other surfaces, we must reuse the current wallpaper
+                    // If there are no other surfaces, we must reuse the current wallpaper. After a
+                    // pool change it only enters the history while it is still in the pool.
                     if group.surfaces.len() == 1 {
                         group.current_image = self.current_img.clone();
-                        group.queue.push(self.current_img.clone());
+                        if !path_changed
+                            || pool_contains(
+                                &self.filelist_cache,
+                                wallpaper_info,
+                                &self.current_img,
+                            )
+                        {
+                            group.queue.push(self.current_img.clone());
+                        }
                     }
 
                     drop(group);
@@ -1504,6 +1505,36 @@ mod pool_tests {
     }
 
     #[test]
+    fn pool_change_into_new_group_seeds_it_from_this_output() {
+        let root = Tree::new(&["a1.png", "a2.png", "sub/b1.png", "sub/b2.png"]);
+        let sub = root.join("sub");
+        let h = harness(&[
+            (root.0.clone(), Recursive::On),
+            (sub.clone(), Recursive::On),
+        ]);
+        let old = info(root.0.clone(), Some(Sorting::Random), None);
+        let new = info(sub.clone(), Some(Sorting::GroupedRandom { group: 7 }), None);
+        let sub_pool = pool(&h, &new);
+        let (a1, b1) = (root.join("a1.png"), sub.join("b1.png"));
+
+        for (current, replaced) in [(a1.clone(), true), (b1.clone(), false)] {
+            let mut picker = picker(&h, &old);
+            seed_history(&mut picker, &[a1.clone(), b1.clone()], &current);
+
+            assert_eq!(reload(&h, &mut picker, &old, &new), replaced);
+            if !replaced {
+                assert_eq!(picker.current_image(), b1);
+            }
+            let ImagePickerSorting::GroupedRandom(grouped) = &picker.sorting else {
+                panic!("expected grouped sorting");
+            };
+            assert_eq!(grouped.group.borrow().current_image, picker.current_image());
+            assert_within(&[picker.current_image()], &sub_pool);
+            assert_within(&walk(&mut picker, &new), &sub_pool);
+        }
+    }
+
+    #[test]
     fn forced_detour_survives_reload_and_navigation_uses_new_pool() {
         let a = Tree::new(&["a1.png", "a2.png", "a3.png", "a4.png"]);
         let b = Tree::new(&["b1.png", "b2.png"]);
@@ -1515,6 +1546,8 @@ mod pool_tests {
         let mut picker = picker(&h, &old);
         build_history(&mut picker, &old);
         picker.set_image(forced.clone());
+        assert_eq!(draw(&mut picker, &old), forced);
+        // Another output's decode runs an idle load pass on this one.
         assert_eq!(draw(&mut picker, &old), forced);
 
         assert!(!reload(&h, &mut picker, &old, &new), "explicit set is kept");
