@@ -580,10 +580,16 @@ impl ConfigWatcher {
         let parent = parent.canonicalize().wrap_err_with(|| {
             format!("Failed to resolve the configuration directory {parent:?}")
         })?;
-        // Keep the last resolved target while the file (or the symlink target) is missing,
-        // so that recreating it is still observed.
-        if let Ok(resolved) = self.path.canonicalize() {
-            self.resolved_target = Some(resolved);
+        // A dangling symlink cannot be canonicalized: watch where its target will appear.
+        let resolved = self.path.canonicalize().ok().or_else(|| {
+            let target = parent.join(fs::read_link(&self.path).ok()?);
+            let target_name = target.file_name()?;
+            Some(target.parent()?.canonicalize().ok()?.join(target_name))
+        });
+        // Otherwise keep the last resolved target while the file (or the symlink target)
+        // is missing, so that recreating it is still observed.
+        if resolved.is_some() {
+            self.resolved_target = resolved;
         }
         let mut targets = vec![parent.join(file_name)];
         targets.extend(self.resolved_target.clone());
@@ -918,6 +924,36 @@ mod reload_tests {
 
         replace_atomically(&path, &content(2));
         expect_reload(&mut watch, &mut config, 2, "valid save after malformed");
+    }
+
+    #[test]
+    fn follows_symlink_that_is_dangling_at_startup() {
+        let tmp = TempDir::new("dangling");
+        let conf = tmp.0.join("home/.config/wpaperd");
+        let pkg = tmp.0.join("dotfiles/wpaperd/.config/wpaperd");
+        fs::create_dir_all(&conf).unwrap();
+        fs::create_dir_all(&pkg).unwrap();
+        let link = conf.join("config.toml");
+        let target = pkg.join("config.toml");
+        symlink(
+            "../../../dotfiles/wpaperd/.config/wpaperd/config.toml",
+            &link,
+        )
+        .unwrap();
+
+        // Mirrors main: an unreadable config starts from the defaults.
+        assert!(Config::new_from_path(&link).is_err());
+        let mut config = Config {
+            path: link.clone(),
+            ..Config::default()
+        };
+        let mut watch = Watch::start(&mut config);
+
+        fs::write(&target, content(1)).unwrap();
+        expect_reload(&mut watch, &mut config, 1, "creation of dangling target");
+
+        replace_atomically(&target, &content(2));
+        expect_reload(&mut watch, &mut config, 2, "replace of created target");
     }
 
     #[test]
