@@ -190,9 +190,9 @@ impl Renderer {
         offset: Option<f32>,
         display_info: &DisplayInfo,
     ) -> Result<()> {
-        unsafe {
-            self.gl.UseProgram(self.program);
-        }
+        // Wrap modes go to whatever is bound on units 0 and 1; after a scene draw TEXTURE1 holds
+        // a sprite, so bind the still textures (and program) first.
+        unsafe { self.restore_still()? };
         let display_width = display_info.scaled_width() as f32;
         let display_height = display_info.scaled_height() as f32;
         let display_ratio = display_width / display_height;
@@ -379,23 +379,37 @@ impl Renderer {
         self.transition_status = TransitionStatus::Ended;
     }
 
-    #[inline]
-    pub fn update_transition(&mut self, transition: Transition, transform: Transform) {
+    /// Swap in the program for `transition`. Uniforms are per program and start at zero, so
+    /// everything `set_mode` and `set_projection_matrix` wrote must be written again. If that
+    /// fails, the old fully configured program stays in use.
+    pub fn update_transition(
+        &mut self,
+        transition: Transition,
+        mode: BackgroundMode,
+        offset: Option<f32>,
+        display_info: &DisplayInfo,
+    ) {
         match create_program(&self.gl, transition) {
             Ok(program) => {
-                unsafe {
-                    self.gl.DeleteProgram(self.program);
-                }
-                // Stop the transition immediately
-                if self.transition_running() {
-                    self.transition_finished();
-                }
-                self.program = program;
-                unsafe {
-                    if let Err(err) = self
-                        .set_projection_matrix(transform)
-                        .wrap_err("Failed to set the projection matrix")
-                    {
+                let previous = std::mem::replace(&mut self.program, program);
+                // Without textureScale the shader samples one border texel: a flat dark frame.
+                let configured = unsafe { self.set_projection_matrix(display_info.transform) }
+                    .wrap_err("Failed to set the projection matrix")
+                    .and_then(|_| {
+                        self.set_mode(mode, offset, display_info)
+                            .wrap_err("Failed to restore the wallpaper mode for the new transition")
+                    });
+                match configured {
+                    Ok(()) => {
+                        unsafe { self.gl.DeleteProgram(previous) };
+                        // Stop the transition immediately
+                        if self.transition_running() {
+                            self.transition_finished();
+                        }
+                    }
+                    Err(err) => {
+                        unsafe { self.gl.DeleteProgram(program) };
+                        self.program = previous;
                         error!("{err:?}");
                     }
                 }
@@ -663,5 +677,220 @@ mod resource_tests {
         renderer.disarm_resources();
         assert_eq!((renderer.program, renderer.vbo, renderer.eab), (0, 0, 0));
         drop(renderer);
+    }
+}
+
+#[cfg(test)]
+mod transition_program_tests {
+    use super::*;
+    use std::{cell::RefCell, collections::BTreeSet, ffi::c_void, ffi::CStr};
+
+    #[derive(Default)]
+    struct Driver {
+        next_name: u32,
+        current: u32,
+        locations: Vec<String>,
+        written: BTreeSet<(u32, String)>,
+        unit: u32,
+        bound: [u32; 2],
+        parameterized: BTreeSet<u32>,
+        missing: &'static str,
+        deleted: Vec<u32>,
+    }
+    thread_local! {
+        static DRIVER: RefCell<Driver> = RefCell::new(Driver::default());
+    }
+    unsafe extern "system" fn name_object(_: u32) -> u32 {
+        DRIVER.with(|d| {
+            let mut d = d.borrow_mut();
+            d.next_name += 1;
+            d.next_name
+        })
+    }
+    unsafe extern "system" fn create_program() -> u32 {
+        unsafe { name_object(0) }
+    }
+    unsafe extern "system" fn ignore_1(_: u32) {}
+    unsafe extern "system" fn ignore_2(_: u32, _: u32) {}
+    unsafe extern "system" fn ignore_2f(_: u32, _: u32) {}
+    unsafe extern "system" fn ignore_4f(_: f32, _: f32, _: f32, _: f32) {}
+    unsafe extern "system" fn active(unit: u32) {
+        DRIVER.with(|d| d.borrow_mut().unit = unit - gl::TEXTURE0);
+    }
+    unsafe extern "system" fn bind(_: u32, texture: u32) {
+        DRIVER.with(|d| {
+            let mut d = d.borrow_mut();
+            let unit = d.unit as usize;
+            d.bound[unit] = texture;
+        });
+    }
+    unsafe extern "system" fn parameter(_: u32, _: u32, _: i32) {
+        DRIVER.with(|d| {
+            let mut d = d.borrow_mut();
+            let texture = d.bound[d.unit as usize];
+            d.parameterized.insert(texture);
+        });
+    }
+    unsafe extern "system" fn source(_: u32, _: i32, _: *const *const i8, _: *const i32) {}
+    unsafe extern "system" fn compiled(_: u32, _: u32, value: *mut i32) {
+        unsafe { *value = 1 };
+    }
+    unsafe extern "system" fn delete_program(program: u32) {
+        DRIVER.with(|d| d.borrow_mut().deleted.push(program));
+    }
+    unsafe extern "system" fn use_program(program: u32) {
+        DRIVER.with(|d| d.borrow_mut().current = program);
+    }
+    unsafe extern "system" fn location(_: u32, name: *const i8) -> i32 {
+        let name = unsafe { CStr::from_ptr(name) }
+            .to_string_lossy()
+            .into_owned();
+        DRIVER.with(|d| {
+            let mut d = d.borrow_mut();
+            if d.missing == name {
+                return -1;
+            }
+            d.locations.push(name);
+            d.locations.len() as i32 - 1
+        })
+    }
+    fn write(location: i32) {
+        DRIVER.with(|d| {
+            let mut d = d.borrow_mut();
+            let entry = (d.current, d.locations[location as usize].clone());
+            d.written.insert(entry);
+        });
+    }
+    unsafe extern "system" fn uniform_1i(location: i32, _: i32) {
+        write(location);
+    }
+    unsafe extern "system" fn uniform_1f(location: i32, _: f32) {
+        write(location);
+    }
+    unsafe extern "system" fn uniform_v(location: i32, _: i32, _: *const f32) {
+        write(location);
+    }
+    unsafe extern "system" fn uniform_matrix(location: i32, _: i32, _: u8, _: *const f32) {
+        write(location);
+    }
+    unsafe extern "system" fn no_error() -> u32 {
+        gl::NO_ERROR
+    }
+    fn driver() -> Rc<gl::Gl> {
+        Rc::new(gl::Gl::load_with(|name| match name {
+            "glCreateProgram" => create_program as *const c_void,
+            "glCreateShader" => name_object as *const c_void,
+            "glShaderSource" => source as *const c_void,
+            "glCompileShader" | "glLinkProgram" | "glDeleteShader" | "glDisable" => {
+                ignore_1 as *const c_void
+            }
+            "glDeleteProgram" => delete_program as *const c_void,
+            "glActiveTexture" => active as *const c_void,
+            "glBindTexture" => bind as *const c_void,
+            "glBindBuffer" => ignore_2f as *const c_void,
+            "glClearColor" => ignore_4f as *const c_void,
+            "glGetShaderiv" => compiled as *const c_void,
+            "glAttachShader" => ignore_2 as *const c_void,
+            "glTexParameteri" => parameter as *const c_void,
+            "glUseProgram" => use_program as *const c_void,
+            "glGetUniformLocation" => location as *const c_void,
+            "glUniform1i" => uniform_1i as *const c_void,
+            "glUniform1f" => uniform_1f as *const c_void,
+            "glUniform2fv" => uniform_v as *const c_void,
+            "glUniformMatrix2fv" => uniform_matrix as *const c_void,
+            "glGetError" => no_error as *const c_void,
+            _ => std::ptr::null(),
+        }))
+    }
+
+    /// A config reload that changes only the transition must leave the new program drawable.
+    #[test]
+    fn replaced_transition_program_receives_every_still_uniform() {
+        // A scene sprite (50) is still bound on TEXTURE1 from the last motion draw.
+        DRIVER.with(|d| {
+            *d.borrow_mut() = Driver {
+                unit: 1,
+                bound: [0, 50],
+                ..Driver::default()
+            }
+        });
+        let gl = driver();
+        let mut renderer = Renderer {
+            gl: gl.clone(),
+            program: 100,
+            vbo: 0,
+            eab: 0,
+            transition_time: 2000,
+            prev_wallpaper: Wallpaper::test_texture(gl.clone(), 101),
+            current_wallpaper: Wallpaper::test_texture(gl, 102),
+            transition_status: TransitionStatus::Running {
+                started: Instant::now(),
+                progress: 0.5,
+            },
+            motion: None,
+            prepared_motion: None,
+        };
+        let display = DisplayInfo {
+            name: "DP-1".into(),
+            description: String::new(),
+            width: 3200,
+            height: 1800,
+            scale: 1,
+            transform: Transform::_90,
+        };
+        renderer.update_transition(
+            Transition::Directional { direction: None },
+            BackgroundMode::Center,
+            None,
+            &display,
+        );
+        let program = renderer.program;
+        assert_ne!(program, 100, "transition program was not replaced");
+        assert!(!renderer.transition_running());
+        DRIVER.with(|d| {
+            let d = d.borrow();
+            assert_eq!(d.deleted, [100]);
+            for uniform in [
+                "u_prev_texture",
+                "u_texture",
+                "direction",
+                "projection_matrix",
+                "textureScale",
+                "prevTextureScale",
+                "ratio",
+                "texture_offset",
+            ] {
+                assert!(
+                    d.written.contains(&(program, uniform.to_owned())),
+                    "{uniform} left at its zero default on the new program"
+                );
+            }
+            assert_eq!(d.parameterized, BTreeSet::from([101, 102]));
+        });
+        // Direct mode changes (reload, resize, transform) must also skip a bound sprite.
+        DRIVER.with(|d| {
+            let mut d = d.borrow_mut();
+            (d.unit, d.bound) = (1, [0, 50]);
+            d.parameterized.clear();
+        });
+        renderer
+            .set_mode(BackgroundMode::Tile, None, &display)
+            .unwrap();
+        DRIVER.with(|d| assert_eq!(d.borrow().parameterized, BTreeSet::from([101, 102])));
+
+        // A new program that cannot be fully configured is discarded; the old one stays.
+        DRIVER.with(|d| {
+            let mut d = d.borrow_mut();
+            d.missing = "textureScale";
+            d.deleted.clear();
+        });
+        renderer.update_transition(Transition::Fade {}, BackgroundMode::Center, None, &display);
+        assert_eq!(renderer.program, program);
+        DRIVER.with(|d| {
+            let d = d.borrow();
+            assert_eq!(d.deleted.len(), 1);
+            assert_ne!(d.deleted[0], program);
+        });
+        renderer.disarm_resources();
     }
 }
