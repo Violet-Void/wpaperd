@@ -85,6 +85,17 @@ impl FilelistCache {
         Ok((ping, filelist_cache))
     }
 
+    /// Populate real directories without a filesystem watcher or event loop.
+    #[cfg(test)]
+    pub fn populated(paths: &[(PathBuf, Recursive)]) -> Self {
+        Self {
+            cache: paths
+                .iter()
+                .map(|(path, recursive)| Filelist::new(path, *recursive))
+                .collect(),
+        }
+    }
+
     pub fn get(&self, path: &Path, recursive: Recursive) -> Arc<Vec<PathBuf>> {
         debug_assert!(path.is_dir());
         self.cache

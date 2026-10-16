@@ -670,25 +670,20 @@ impl Surface {
             return;
         }
 
-        if self.motion_owned() && self.wallpaper_info.path != wallpaper_info.path {
-            self.deferred_still_selection = true;
-        }
         // Put the new value in place
         std::mem::swap(&mut self.wallpaper_info, &mut wallpaper_info);
-        // if the two paths are different and the new path is a directory but doesn't contain the
-        // old image
-        let path_changed = self.wallpaper_info.path != wallpaper_info.path
-            && self.wallpaper_info.path.is_dir()
-                && !wallpaper_info.path.starts_with(&self.wallpaper_info.path)
-            // and the recursive mode is different
-            && wallpaper_info.recursive.as_ref().zip(self.wallpaper_info.recursive.as_ref()).map(|(x, y)| x != y).unwrap_or(false);
-        self.image_picker.update_sorting(
+        // A changed pool always resets future navigation; this is true only when the current
+        // image itself must be replaced
+        let replace_current = self.image_picker.update_source(
+            &wallpaper_info,
             &self.wallpaper_info,
             &self.wl_surface,
-            path_changed,
             &wallpaper_groups,
         );
-        if path_changed && !self.motion_owned() {
+        if replace_current && self.motion_owned() {
+            self.deferred_still_selection = true;
+        }
+        if replace_current && !self.motion_owned() {
             // ask the image_picker to pick a new a image
             self.image_picker.next_image();
             self.load_new_wallpaper();
@@ -696,7 +691,7 @@ impl Surface {
             // Always queue draw to load changes (needed for GroupedRandom)
             self.queue_draw(qh);
         }
-        self.handle_new_duration(&wallpaper_info, handle, path_changed);
+        self.handle_new_duration(&wallpaper_info, handle, replace_current);
 
         if self.wallpaper_info.mode != wallpaper_info.mode
             || self.wallpaper_info.offset != wallpaper_info.offset
@@ -721,7 +716,7 @@ impl Surface {
                     error!("{err:?}");
                 }
             }
-            if !path_changed {
+            if !replace_current {
                 // We should draw immediately
                 self.try_drawing(qh);
             }
