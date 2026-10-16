@@ -256,7 +256,7 @@ private outputs. Each one changes the configured pool by saving the config in pl
   timing, so they are not asserted.
 
 ```bash
-/usr/bin/python3 tests/nested_wayland_scene.py --binaries target/release --scenario pause-reload
+for scenario in pause-reload set-reload group-set-reload; do /usr/bin/python3 tests/nested_wayland_scene.py --binaries target/release --scenario "$scenario" || break; done
 ```
 
 On 2026-10-16, release builds ran under KWin 6.8.0 with software EGL. On `main` `c397225`, all
