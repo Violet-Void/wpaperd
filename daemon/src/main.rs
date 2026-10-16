@@ -31,7 +31,7 @@ use std::{
 use clap::Parser;
 use color_eyre::eyre::{eyre, OptionExt, WrapErr};
 use color_eyre::{Result, Section};
-use config::Config;
+use config::{Config, ConfigWatcher};
 use egl::API as egl;
 use filelist_cache::FilelistCache;
 use flexi_logger::{Duplicate, FileSpec, Logger};
@@ -88,9 +88,8 @@ fn run(opts: Opts, xdg_dirs: BaseDirectories) -> Result<()> {
         }
     };
 
-    let reloaded = Arc::new(AtomicBool::new(false));
     // Do not stop when the configuration is invalid, we can always reload it at runtime
-    let mut config = match Config::new_from_path(&config_file) {
+    let config = match Config::new_from_path(&config_file) {
         Ok(config) => config,
         Err(err) => {
             error!("{err:?}");
@@ -99,7 +98,6 @@ fn run(opts: Opts, xdg_dirs: BaseDirectories) -> Result<()> {
             config
         }
     };
-    config.reloaded = Some(reloaded);
 
     // we use the OpenGL ES API because it's more widely supported
     // and it's used by wlroots
@@ -136,10 +134,10 @@ fn run(opts: Opts, xdg_dirs: BaseDirectories) -> Result<()> {
         .map_err(|e| eyre!("{e}"))
         .wrap_err("Failed to insert the hotwatch listener into the event loop")?;
 
-    let mut hotwatch = Hotwatch::new().wrap_err("Failed to initialize hotwatch listener")?;
-    config
-        .listen_to_changes(&mut hotwatch, ping)
+    let mut config_watcher = ConfigWatcher::new(&config.path, ping)
         .wrap_err("Failed to watch on config file changes")?;
+
+    let mut hotwatch = Hotwatch::new().wrap_err("Failed to initialize hotwatch listener")?;
 
     let (ping, filelist_cache) =
         FilelistCache::new(config.paths(), &mut hotwatch, event_loop.handle())
@@ -228,14 +226,7 @@ fn run(opts: Opts, xdg_dirs: BaseDirectories) -> Result<()> {
         }
 
         // If the config has been modified, this value will return true
-        if wpaperd
-            .config
-            .reloaded
-            .as_ref()
-            .unwrap()
-            .load(Ordering::Acquire)
-            && wpaperd.config.update()
-        {
+        if config_watcher.take_change() && wpaperd.config.update() {
             // Update the filelist cache, keep it up to date
             // We need to call this before because updating the surfaces
             // will start loading the wallpapers in the background
