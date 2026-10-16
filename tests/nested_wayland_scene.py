@@ -745,6 +745,14 @@ class PrivateDaemon:
             assert self.process.poll() is None, "Private daemon exited before IPC readiness"
             assert time.monotonic() < deadline, "Daemon IPC timeout"
             time.sleep(.1)
+        # The socket is bound before output events are dispatched; wait for every output.
+        while True:
+            proc = subprocess.run([str(self.args.binaries / "wpaperctl"), "status", "--json"],
+                                  capture_output=True, text=True, timeout=10)
+            if proc.returncode == 0 and len(json.loads(proc.stdout)) == len(POOL_OUTPUTS):
+                return
+            assert self.process.poll() is None and time.monotonic() < deadline, proc.stderr
+            time.sleep(.1)
 
     def stop(self):
         stop_owned(self.process)
@@ -819,8 +827,8 @@ def pool_scenario(args, body):
         body(daemon, result)
         daemon.assert_clean_log()
         result["passed"] = True
-    except AssertionError as err:
-        result["failure"] = str(err)
+    except Exception as err:
+        result["failure"] = type(err).__name__ + ": " + str(err)
         raise
     finally:
         if daemon is not None:
@@ -869,7 +877,7 @@ def pause_reload(daemon, result):
     result["paused_status_after"] = {n: after[n] for n in paused}
     for n in paused:
         assert after[n]["status"] == "paused", after
-        # Timer state is untouched: the held remainder is exactly the pre-reload value.
+        # Timer state is untouched: the held remainder (whole seconds) is the pre-reload value.
         assert after[n]["duration_left"] == held[n], (n, held[n], after[n])
 
     # Paused outputs never advance past their period; running outputs prove timers still fire.
@@ -935,6 +943,12 @@ def set_reload(daemon, result):
         return current
 
     result["coordinated_set"] = set_each(probes, "coordinated-set")
+    # A decode on the control pings every output: one idle load pass before the reload.
+    before = daemon.current()[control]
+    daemon.cli("next", control)
+    current, _ = daemon.wait("control-decode", lambda cur, drawn: cur[control] != before
+                             and drawn[control] == cur[control]
+                             and all(cur[n] == p for n, p in zip(outputs, probes)))
     daemon.save(config("c"))
     daemon.wait("reload-applied", lambda cur, drawn: cur[control] in c
                 and drawn[control] == cur[control])
@@ -947,18 +961,20 @@ def set_reload(daemon, result):
     status = daemon.status()
     assert all(status[n]["status"] == "paused" for n in POOL_OUTPUTS), status
 
-    # Leaving the detour adopts the new pool, never the old pool.
-    daemon.cli("next", *outputs)
-    current, _ = daemon.wait("next-into-pool-c", lambda cur, drawn: all(
-        cur[n] in c and drawn[n] == cur[n] for n in outputs))
-    result["after_next"] = current
-    for _ in range(3):
+    # Leaving the detour adopts the new pool; the reset history then starts there.
+    for action in ("next", "next", "previous"):
         prior = daemon.current()
-        daemon.cli("previous", *outputs)
-        time.sleep(.6)
-        current, _ = daemon.wait("previous-in-pool-c", lambda cur, drawn: all(
-            drawn[n] == cur[n] for n in outputs))
-        assert all(current[n] in c for n in outputs), ("previous returned to the old pool", prior, current)
+        daemon.cli(action, *outputs)
+        current, _ = daemon.wait(action + "-in-pool-c", lambda cur, drawn: all(
+            cur[n] != prior[n] and drawn[n] == cur[n] for n in outputs))
+        assert all(current[n] in c for n in outputs), (action + " left pool C", prior, current)
+    # At the start of the new history, previous stays put instead of returning to B or a probe.
+    daemon.cli("previous", *outputs)
+    time.sleep(.6)
+    later, _ = daemon.wait("history-start", lambda cur, drawn: all(
+        drawn[n] == cur[n] for n in outputs))
+    assert all(later[n] == current[n] for n in outputs), ("previous left the new history", current, later)
+    result["after_navigation"] = current
     result["final_set"] = set_each(finals, "final-set")
     daemon.cli("resume", *POOL_OUTPUTS)
     time.sleep(.3)
@@ -971,8 +987,8 @@ def group_set_reload(daemon, result):
 
     Virtual-0..2 share group 1; Virtual-3 is ungrouped. A set on a grouped output holds only
     until any output decodes an image: that load pass hands the output the group's shared image
-    back. This is pre-existing (2cde3d9, c397225, upstream 483225a image_picker.rs
-    get_image_path) and pinned here as parity, so a fix must update this check. Distinct
+    back. This is pre-existing (measured on 2cde3d9 and c397225; the same get_image_path arm is
+    in upstream 483225a) and pinned here as parity, so a fix must update this check. Distinct
     per-output sets inside one group are therefore timing dependent and not asserted.
     """
     b, c = daemon.files("b"), daemon.files("c")
@@ -1021,10 +1037,11 @@ def group_set_reload(daemon, result):
     status = daemon.status()
     assert all(status[n]["status"] == "paused" for n in POOL_OUTPUTS), status
 
-    for action in ("next", "previous", "previous", "next"):
+    for action in ("next", "next", "previous"):
+        prior = current
         daemon.cli(action, *grouped)
-        time.sleep(.6)
-        current, _ = daemon.wait(action + "-group-in-pool-c", coordinated(c))
+        current, _ = daemon.wait(action + "-group-in-pool-c", lambda cur, drawn: (
+            coordinated(c)(cur, drawn) and all(cur[n] != prior[n] for n in grouped)))
     result["after_navigation"] = current
     daemon.cli("resume", *POOL_OUTPUTS)
     time.sleep(.3)
@@ -1045,7 +1062,8 @@ def main():
     parser.add_argument("--scenario", choices=("scene", "transition-reload", *POOL_SCENARIOS),
                         default="scene",
                         help="transition-reload rewrites transitions during four-output changes; "
-                             "pause-reload and group-set-reload change the pool under pause/set")
+                             "pause-reload, set-reload and group-set-reload change the pool "
+                             "under pause, set and grouped outputs")
     parser.add_argument("--inside", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     args.binaries, args.repo = args.binaries.resolve(), args.repo.resolve()
