@@ -237,6 +237,17 @@ impl ImagePickerSorting {
     }
 }
 
+/// How a reloaded output config affects the displayed and pending images.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceUpdate {
+    /// The current image is outside the new pool and must be replaced now.
+    pub replace_current: bool,
+    /// A pending list image belongs to the old pool and must not be drawn.
+    pub drop_pending: bool,
+    /// A new `Next` is needed. A dropped pending load already holds one.
+    pub queue_next: bool,
+}
+
 pub struct ImagePicker {
     current_img: PathBuf,
     actions: VecDeque<ImagePickerAction>,
@@ -537,21 +548,29 @@ impl ImagePicker {
     ///
     /// A changed pool always resets future navigation, so next/previous cannot return to images
     /// of the old pool. The current image is replaced separately: only a drawn, non-forced image
-    /// outside the new pool. Returns true when the current image must be replaced now.
+    /// outside the new pool. A pending list load from the old pool is dropped.
     pub fn update_source(
         &mut self,
         old: &WallpaperInfo,
         new: &WallpaperInfo,
+        pending: Option<&ImageResult>,
         wl_surface: &WlSurface,
         wallpaper_groups: &Rc<RefCell<WallpaperGroups>>,
-    ) -> bool {
+    ) -> SourceUpdate {
         let pool_changed = pool_changed(old, new);
-        let replace = pool_changed
+        let replace_current = pool_changed
             && !self.was_last_forced
             && !self.current_img.as_os_str().is_empty()
             && !pool_contains(&self.filelist_cache, new, &self.current_img);
+        let drop_pending = pool_changed
+            && matches!(pending, Some(ImageResult::FromList { path, .. })
+                if !pool_contains(&self.filelist_cache, new, path));
         self.update_sorting(new, wl_surface, pool_changed, wallpaper_groups);
-        replace
+        SourceUpdate {
+            replace_current,
+            drop_pending,
+            queue_next: replace_current && !(drop_pending && !self.actions.is_empty()),
+        }
     }
 
     /// Return true if the path changed
@@ -629,6 +648,12 @@ impl ImagePicker {
                             queue.push(shared.current_image.clone());
                         }
                         shared.queue = queue;
+                        // A shared pick from the old pool must not be handed out again.
+                        if shared.loading_image.as_ref().is_some_and(|path| {
+                            !pool_contains(&self.filelist_cache, wallpaper_info, path)
+                        }) {
+                            shared.loading_image = None;
+                        }
                     }
                 }
                 (_, Sorting::GroupedRandom { group }) => {
@@ -1202,19 +1227,31 @@ mod pool_tests {
         picker.current_image()
     }
 
-    /// The picker half of `Surface::update_wallpaper_info`.
+    /// The picker half of `Surface::update_wallpaper_info`, with a still-pending load.
+    fn reload_pending(
+        h: &Harness,
+        picker: &mut ImagePicker,
+        old: &WallpaperInfo,
+        new: &WallpaperInfo,
+        pending: Option<ImageResult>,
+    ) -> SourceUpdate {
+        let update = picker.update_source(old, new, pending.as_ref(), &h.surface, &h.groups);
+        if update.replace_current || update.drop_pending {
+            if update.queue_next {
+                picker.next_image();
+            }
+            draw(picker, new);
+        }
+        update
+    }
+
     fn reload(
         h: &Harness,
         picker: &mut ImagePicker,
         old: &WallpaperInfo,
         new: &WallpaperInfo,
     ) -> bool {
-        let replace = picker.update_source(old, new, &h.surface, &h.groups);
-        if replace {
-            picker.next_image();
-            draw(picker, new);
-        }
-        replace
+        reload_pending(h, picker, old, new, None).replace_current
     }
 
     /// Mixed previous/next navigation after a reload.
@@ -1622,6 +1659,79 @@ mod pool_tests {
         assert_eq!(picker.current_image(), good);
         picker.previous_image();
         assert!(picker.is_reloading(), "previous is still a detour return");
+    }
+
+    #[test]
+    fn pending_old_pool_load_is_dropped_without_double_advance() {
+        let root = Tree::new(&["x.png", "w.png", "sub/y.png", "sub/z.png"]);
+        let sub = root.join("sub");
+        let h = harness(&[
+            (root.0.clone(), Recursive::On),
+            (sub.clone(), Recursive::On),
+        ]);
+        let old = info(root.0.clone(), Some(Sorting::Random), None);
+        let new = info(sub.clone(), Some(Sorting::Random), None);
+        let sub_pool = pool(&h, &new);
+        let pending = || ImageResult::FromList {
+            path: root.join("w.png"),
+            index: None,
+        };
+
+        // Kept current image: the user's pending `next` is served from the new pool.
+        let mut kept = picker(&h, &old);
+        let y = sub.join("y.png");
+        seed_history(&mut kept, &[root.join("x.png"), y.clone()], &y);
+        kept.next_image();
+        let update = reload_pending(&h, &mut kept, &old, &new, Some(pending()));
+        assert!(update.drop_pending && !update.replace_current && !update.queue_next);
+        assert_ne!(kept.current_image(), y, "pending next still advances");
+        assert_within(&[kept.current_image()], &sub_pool);
+        assert!(kept.actions.is_empty(), "exactly one advance");
+
+        // Replaced current image: the pending action is reused, not doubled.
+        let mut replaced = picker(&h, &old);
+        let x = root.join("x.png");
+        seed_history(&mut replaced, &[y.clone(), x.clone()], &x);
+        replaced.next_image();
+        let update = reload_pending(&h, &mut replaced, &old, &new, Some(pending()));
+        assert!(update.drop_pending && update.replace_current && !update.queue_next);
+        assert_within(&[replaced.current_image()], &sub_pool);
+        assert!(replaced.actions.is_empty(), "exactly one advance");
+        assert_within(&walk(&mut replaced, &new), &sub_pool);
+
+        // A pending image that is still in the pool is kept.
+        let mut member = picker(&h, &old);
+        seed_history(&mut member, std::slice::from_ref(&x), &x);
+        member.next_image();
+        let in_pool = ImageResult::FromList {
+            path: sub.join("z.png"),
+            index: None,
+        };
+        let update = member.update_source(&old, &new, Some(&in_pool), &h.surface, &h.groups);
+        assert!(!update.drop_pending);
+    }
+
+    #[test]
+    fn grouped_reset_drops_shared_pending_pick_from_old_pool() {
+        let a = Tree::new(&["a1.png", "a2.png", "a3.png", "a4.png"]);
+        let b = Tree::new(&["b1.png", "b2.png"]);
+        let h = harness(&[(a.0.clone(), Recursive::On), (b.0.clone(), Recursive::On)]);
+        let grouped = Some(Sorting::GroupedRandom { group: 4 });
+        let old = info(a.0.clone(), grouped, None);
+        let new = info(b.0.clone(), grouped, None);
+        let mut picker = picker(&h, &old);
+        build_history(&mut picker, &old);
+        let ImagePickerSorting::GroupedRandom(group) = &picker.sorting else {
+            panic!("expected grouped sorting");
+        };
+        // Another group member started loading an old-pool image.
+        group.group.borrow_mut().loading_image = Some(a.join("a4.png"));
+
+        reload(&h, &mut picker, &old, &new);
+
+        let b_pool = pool(&h, &new);
+        assert_within(&[picker.current_image()], &b_pool);
+        assert_within(&walk(&mut picker, &new), &b_pool);
     }
 
     #[test]

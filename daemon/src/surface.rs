@@ -675,20 +675,29 @@ impl Surface {
 
         // Put the new value in place
         std::mem::swap(&mut self.wallpaper_info, &mut wallpaper_info);
-        // A changed pool always resets future navigation; this is true only when the current
-        // image itself must be replaced
-        let replace_current = self.image_picker.update_source(
+        // A changed pool always resets future navigation; replace_current is true only when the
+        // current image itself must be replaced
+        let update = self.image_picker.update_source(
             &wallpaper_info,
             &self.wallpaper_info,
+            self.loading_image.as_ref(),
             &self.wl_surface,
             &wallpaper_groups,
         );
-        if replace_current && self.motion_owned() {
+        let replace_current = update.replace_current;
+        let motion_owned = self.motion_owned();
+        if replace_current && motion_owned {
             self.deferred_still_selection = true;
         }
-        if replace_current && !self.motion_owned() {
-            // ask the image_picker to pick a new a image
-            self.image_picker.next_image();
+        if !motion_owned && (replace_current || update.drop_pending) {
+            if update.drop_pending {
+                // Its decode may finish later, but it is never drawn
+                self.loading_image = None;
+            }
+            if update.queue_next {
+                // ask the image_picker to pick a new a image
+                self.image_picker.next_image();
+            }
             self.load_new_wallpaper();
         } else if let Some(Sorting::GroupedRandom { .. }) = self.wallpaper_info.sorting {
             // Always queue draw to load changes (needed for GroupedRandom)
