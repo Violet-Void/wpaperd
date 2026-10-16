@@ -686,8 +686,15 @@ impl Surface {
         );
         let replace_current = update.replace_current;
         let motion_owned = self.motion_owned();
-        if replace_current && motion_owned {
-            self.deferred_still_selection = true;
+        if motion_owned {
+            if update.drop_pending {
+                // restore_still would finish this old-pool load; the reload supersedes it
+                self.loading_image = None;
+                self.image_picker.clear_first_action();
+            }
+            if replace_current {
+                self.deferred_still_selection = true;
+            }
         }
         if !motion_owned && (replace_current || update.drop_pending) {
             if update.drop_pending {
