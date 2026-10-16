@@ -380,7 +380,8 @@ impl Renderer {
     }
 
     /// Swap in the program for `transition`. Uniforms are per program and start at zero, so
-    /// everything `set_mode` and `set_projection_matrix` wrote must be written again.
+    /// everything `set_mode` and `set_projection_matrix` wrote must be written again. If that
+    /// fails, the old fully configured program stays in use.
     pub fn update_transition(
         &mut self,
         transition: Transition,
@@ -390,28 +391,27 @@ impl Renderer {
     ) {
         match create_program(&self.gl, transition) {
             Ok(program) => {
-                unsafe {
-                    self.gl.DeleteProgram(self.program);
-                }
-                // Stop the transition immediately
-                if self.transition_running() {
-                    self.transition_finished();
-                }
-                self.program = program;
-                unsafe {
-                    if let Err(err) = self
-                        .set_projection_matrix(display_info.transform)
-                        .wrap_err("Failed to set the projection matrix")
-                    {
+                let previous = std::mem::replace(&mut self.program, program);
+                // Without textureScale the shader samples one border texel: a flat dark frame.
+                let configured = unsafe { self.set_projection_matrix(display_info.transform) }
+                    .wrap_err("Failed to set the projection matrix")
+                    .and_then(|_| {
+                        self.set_mode(mode, offset, display_info)
+                            .wrap_err("Failed to restore the wallpaper mode for the new transition")
+                    });
+                match configured {
+                    Ok(()) => {
+                        unsafe { self.gl.DeleteProgram(previous) };
+                        // Stop the transition immediately
+                        if self.transition_running() {
+                            self.transition_finished();
+                        }
+                    }
+                    Err(err) => {
+                        unsafe { self.gl.DeleteProgram(program) };
+                        self.program = previous;
                         error!("{err:?}");
                     }
-                }
-                // Without textureScale the shader samples one border texel: a flat dark frame.
-                if let Err(err) = self
-                    .set_mode(mode, offset, display_info)
-                    .wrap_err("Failed to restore the wallpaper mode for the new transition")
-                {
-                    error!("{err:?}");
                 }
             }
             Err(err) => error!("{err:?}"),
@@ -694,6 +694,8 @@ mod transition_program_tests {
         unit: u32,
         bound: [u32; 2],
         parameterized: BTreeSet<u32>,
+        missing: &'static str,
+        deleted: Vec<u32>,
     }
     thread_local! {
         static DRIVER: RefCell<Driver> = RefCell::new(Driver::default());
@@ -733,6 +735,9 @@ mod transition_program_tests {
     unsafe extern "system" fn compiled(_: u32, _: u32, value: *mut i32) {
         unsafe { *value = 1 };
     }
+    unsafe extern "system" fn delete_program(program: u32) {
+        DRIVER.with(|d| d.borrow_mut().deleted.push(program));
+    }
     unsafe extern "system" fn use_program(program: u32) {
         DRIVER.with(|d| d.borrow_mut().current = program);
     }
@@ -742,6 +747,9 @@ mod transition_program_tests {
             .into_owned();
         DRIVER.with(|d| {
             let mut d = d.borrow_mut();
+            if d.missing == name {
+                return -1;
+            }
             d.locations.push(name);
             d.locations.len() as i32 - 1
         })
@@ -773,8 +781,10 @@ mod transition_program_tests {
             "glCreateProgram" => create_program as *const c_void,
             "glCreateShader" => name_object as *const c_void,
             "glShaderSource" => source as *const c_void,
-            "glCompileShader" | "glLinkProgram" | "glDeleteShader" | "glDeleteProgram"
-            | "glDisable" => ignore_1 as *const c_void,
+            "glCompileShader" | "glLinkProgram" | "glDeleteShader" | "glDisable" => {
+                ignore_1 as *const c_void
+            }
+            "glDeleteProgram" => delete_program as *const c_void,
             "glActiveTexture" => active as *const c_void,
             "glBindTexture" => bind as *const c_void,
             "glBindBuffer" => ignore_2f as *const c_void,
@@ -839,6 +849,7 @@ mod transition_program_tests {
         assert!(!renderer.transition_running());
         DRIVER.with(|d| {
             let d = d.borrow();
+            assert_eq!(d.deleted, [100]);
             for uniform in [
                 "u_prev_texture",
                 "u_texture",
@@ -866,6 +877,20 @@ mod transition_program_tests {
             .set_mode(BackgroundMode::Tile, None, &display)
             .unwrap();
         DRIVER.with(|d| assert_eq!(d.borrow().parameterized, BTreeSet::from([101, 102])));
+
+        // A new program that cannot be fully configured is discarded; the old one stays.
+        DRIVER.with(|d| {
+            let mut d = d.borrow_mut();
+            d.missing = "textureScale";
+            d.deleted.clear();
+        });
+        renderer.update_transition(Transition::Fade {}, BackgroundMode::Center, None, &display);
+        assert_eq!(renderer.program, program);
+        DRIVER.with(|d| {
+            let d = d.borrow();
+            assert_eq!(d.deleted.len(), 1);
+            assert_ne!(d.deleted[0], program);
+        });
         renderer.disarm_resources();
     }
 }
