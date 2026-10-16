@@ -407,8 +407,9 @@ impl Renderer {
                     }
                 }
                 // Without textureScale the shader samples one border texel: a flat dark frame.
-                if let Err(err) = self
-                    .set_mode(mode, offset, display_info)
+                // Bind the still textures first so wrap modes never land on scene sprites.
+                if let Err(err) = unsafe { self.restore_still() }
+                    .and_then(|_| self.set_mode(mode, offset, display_info))
                     .wrap_err("Failed to restore the wallpaper mode for the new transition")
                 {
                     error!("{err:?}");
@@ -691,6 +692,9 @@ mod transition_program_tests {
         current: u32,
         locations: Vec<String>,
         written: BTreeSet<(u32, String)>,
+        unit: u32,
+        bound: [u32; 2],
+        parameterized: BTreeSet<u32>,
     }
     thread_local! {
         static DRIVER: RefCell<Driver> = RefCell::new(Driver::default());
@@ -707,7 +711,25 @@ mod transition_program_tests {
     }
     unsafe extern "system" fn ignore_1(_: u32) {}
     unsafe extern "system" fn ignore_2(_: u32, _: u32) {}
-    unsafe extern "system" fn ignore_3i(_: u32, _: u32, _: i32) {}
+    unsafe extern "system" fn ignore_2f(_: u32, _: u32) {}
+    unsafe extern "system" fn ignore_4f(_: f32, _: f32, _: f32, _: f32) {}
+    unsafe extern "system" fn active(unit: u32) {
+        DRIVER.with(|d| d.borrow_mut().unit = unit - gl::TEXTURE0);
+    }
+    unsafe extern "system" fn bind(_: u32, texture: u32) {
+        DRIVER.with(|d| {
+            let mut d = d.borrow_mut();
+            let unit = d.unit as usize;
+            d.bound[unit] = texture;
+        });
+    }
+    unsafe extern "system" fn parameter(_: u32, _: u32, _: i32) {
+        DRIVER.with(|d| {
+            let mut d = d.borrow_mut();
+            let texture = d.bound[d.unit as usize];
+            d.parameterized.insert(texture);
+        });
+    }
     unsafe extern "system" fn source(_: u32, _: i32, _: *const *const i8, _: *const i32) {}
     unsafe extern "system" fn compiled(_: u32, _: u32, value: *mut i32) {
         unsafe { *value = 1 };
@@ -753,10 +775,14 @@ mod transition_program_tests {
             "glCreateShader" => name_object as *const c_void,
             "glShaderSource" => source as *const c_void,
             "glCompileShader" | "glLinkProgram" | "glDeleteShader" | "glDeleteProgram"
-            | "glActiveTexture" => ignore_1 as *const c_void,
+            | "glDisable" => ignore_1 as *const c_void,
+            "glActiveTexture" => active as *const c_void,
+            "glBindTexture" => bind as *const c_void,
+            "glBindBuffer" => ignore_2f as *const c_void,
+            "glClearColor" => ignore_4f as *const c_void,
             "glGetShaderiv" => compiled as *const c_void,
             "glAttachShader" => ignore_2 as *const c_void,
-            "glTexParameteri" => ignore_3i as *const c_void,
+            "glTexParameteri" => parameter as *const c_void,
             "glUseProgram" => use_program as *const c_void,
             "glGetUniformLocation" => location as *const c_void,
             "glUniform1i" => uniform_1i as *const c_void,
@@ -771,7 +797,14 @@ mod transition_program_tests {
     /// A config reload that changes only the transition must leave the new program drawable.
     #[test]
     fn replaced_transition_program_receives_every_still_uniform() {
-        DRIVER.with(|d| *d.borrow_mut() = Driver::default());
+        // A scene sprite (50) is still bound on TEXTURE1 from the last motion draw.
+        DRIVER.with(|d| {
+            *d.borrow_mut() = Driver {
+                unit: 1,
+                bound: [0, 50],
+                ..Driver::default()
+            }
+        });
         let gl = driver();
         let mut renderer = Renderer {
             gl: gl.clone(),
@@ -822,6 +855,7 @@ mod transition_program_tests {
                     "{uniform} left at its zero default on the new program"
                 );
             }
+            assert_eq!(d.parameterized, BTreeSet::from([101, 102]));
         });
         renderer.disarm_resources();
     }
