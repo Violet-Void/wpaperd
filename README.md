@@ -73,6 +73,44 @@ binary, plus completions and man pages. `make uninstall` with the same `PREFIX` 
 and `DESTDIR` stages an install for packaging. `make install` refuses to overwrite binaries
 that a pacman package owns; use `make arch-pkg` for that case.
 
+### Updating and rolling back the Arch package
+
+The package builds one reviewed commit, so `wpaperd`, `wpaperctl`, the man pages and the user
+unit always match. `make arch-pkg` packages the checkout's committed `HEAD`; `makepkg` run on a
+copy of `contrib/arch/PKGBUILD` builds its pinned `_commit` from GitHub. Building and activating
+are separate steps, and `MAKEPKG_FLAGS=-f` builds without installing:
+
+```bash
+$ git switch --detach <reviewed-commit>
+$ PKGDEST="$PWD/target/arch/pkg" make arch-pkg MAKEPKG_FLAGS=-f
+$ pacman -Qlp target/arch/pkg/wpaperd-violet-git-*.pkg.tar.zst
+```
+
+Activate it, then check that the daemon runs the new binary:
+
+```bash
+$ sudo pacman -U target/arch/pkg/wpaperd-violet-git-<pkgver>-1-x86_64.pkg.tar.zst
+$ systemctl --user daemon-reload
+$ systemctl --user restart wpaperd.service
+$ make doctor
+```
+
+Keep the previously installed package file for rollback; `pacman -U` does not copy a local
+package into pacman's cache. Reinstall it the same way, or return to the Arch repo build with
+`sudo pacman -S wpaperd`, which replaces the conflicting fork package. The repo build lacks the
+fork's fixes and `wpaperctl scene`. Restart `wpaperd.service` after either rollback.
+
+To take in upstream changes, merge them through a reviewed PR instead of rebasing published
+branches:
+
+1. `git fetch upstream`, then `git switch -c sync/upstream-<date> origin/main` and
+   `git merge upstream/main`.
+2. Run `cargo fmt --all --check`, `cargo clippy --all --all-features --locked`,
+   `cargo test --all --locked` and `make arch-pkg MAKEPKG_FLAGS=-f`, then open a PR into `main`.
+3. After it merges, move `_commit` in `contrib/arch/PKGBUILD` to the merged commit in a second
+   PR, since a commit cannot pin itself.
+4. Build that commit and activate it as above.
+
 ### Switching from the upstream package or another build
 
 The fork reads the same `$XDG_CONFIG_HOME/wpaperd/config.toml` in the same format, so the

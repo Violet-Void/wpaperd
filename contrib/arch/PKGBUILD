@@ -4,10 +4,13 @@
 #
 # Builds the Violet-Void fork and replaces the repo `wpaperd` package through
 # provides/conflicts. `make arch-pkg` sets WPAPERD_SOURCE to the local checkout's HEAD;
-# without it the package builds the fork's bro/integration branch from GitHub.
+# without it the package builds the reviewed fork commit pinned in _commit from GitHub.
+# Move _commit only through a reviewed PR (see README, "Updating and rolling back").
 
 pkgname=wpaperd-violet-git
 _name=wpaperd
+# Reviewed main with the config-reload (#12) and pool-adoption (#13) fixes.
+_commit=c39722517e98f1f5c8a837ab14487abd9f52ee84
 pkgver=1.3.0
 pkgrel=1
 pkgdesc="Modern wallpaper daemon for Wayland (Violet-Void fork with motion scenes)"
@@ -18,7 +21,7 @@ depends=('dav1d' 'jemalloc' 'libxkbcommon' 'mesa' 'wayland')
 makedepends=('cargo' 'scdoc' 'git')
 provides=("${_name}")
 conflicts=("${_name}")
-source=("${_name}::${WPAPERD_SOURCE:-git+${url}.git#branch=bro/integration}")
+source=("${_name}::${WPAPERD_SOURCE:-git+${url}.git#commit=${_commit}}")
 sha256sums=('SKIP')
 
 pkgver() {
