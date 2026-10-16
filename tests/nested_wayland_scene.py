@@ -988,7 +988,7 @@ def group_set_reload(daemon, result):
     Virtual-0..2 share group 1; Virtual-3 is ungrouped. A set on a grouped output holds only
     until any output decodes an image: that load pass hands the output the group's shared image
     back. This is pre-existing (measured on 2cde3d9 and c397225; the same get_image_path arm is
-    in upstream 483225a) and pinned here as parity, so a fix must update this check. Distinct
+    in upstream 483225a) and pinned here as parity; the fix for wpaperd #18 must update it. Distinct
     per-output sets inside one group are therefore timing dependent and not asserted.
     """
     b, c = daemon.files("b"), daemon.files("c")

@@ -250,7 +250,8 @@ private outputs. Each one changes the configured pool by saving the config in pl
 - `group-set-reload` puts three outputs in group 1. A `set` on a grouped output holds only until
   any output decodes an image. That load pass returns the group's shared image. The behavior
   predates #2: it also occurs on `2cde3d9`, and upstream `483225a` has the same code. The
-  scenario pins it as parity. It then checks that the reload and each navigation step move the
+  scenario pins it as parity until [#18](https://github.com/Violet-Void/wpaperd/issues/18) is
+  fixed. It then checks that the reload and each navigation step move the
   group, as one image, within the new pool. Distinct per-output sets inside one group depend on
   timing, so they are not asserted.
 
