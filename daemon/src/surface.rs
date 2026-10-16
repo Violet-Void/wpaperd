@@ -737,7 +737,9 @@ impl Surface {
                 } else {
                     context.renderer.update_transition(
                         self.wallpaper_info.transition.clone(),
-                        self.display_info.transform,
+                        self.wallpaper_info.mode,
+                        self.wallpaper_info.offset,
+                        &self.display_info,
                     );
                 }
             }
