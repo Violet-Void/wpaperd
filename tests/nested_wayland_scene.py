@@ -656,12 +656,16 @@ def transition_reload(args):
             # Applying the reload ends the transitions early. Before 11 s an unapplied 12 s
             # transition is still mid-way, so an exact frame proves the swap happened. Poll
             # instead of assuming the hotwatch delivery delay.
-            while not (applied := settled(label + "-applied", color)):
-                if time.monotonic() - started > 11:
+            deadline = started + 11
+            while True:
+                applied = settled(label + "-applied", color)
+                finished = time.monotonic()
+                # A match whose capture ended after the deadline may be natural completion.
+                applied = applied and finished <= deadline
+                if applied or finished > deadline:
                     break
                 time.sleep(.25)
-            result.setdefault("applied_after_seconds", []).append(
-                round(time.monotonic() - started, 2))
+            result.setdefault("applied_after_seconds", []).append(round(finished - started, 2))
             time.sleep(.5)
             drawn = settled(label, color)
             result["rounds"].append({"round": step, "transition": RELOAD_TRANSITIONS[step],
