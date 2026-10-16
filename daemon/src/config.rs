@@ -954,6 +954,26 @@ mod reload_tests {
 
         replace_atomically(&target, &content(2));
         expect_reload(&mut watch, &mut config, 2, "replace of created target");
+
+        // Retarget to a file that does not exist yet, in a directory not watched so far.
+        let pkg2 = tmp.0.join("dotfiles/host/.config/wpaperd");
+        fs::create_dir_all(&pkg2).unwrap();
+        let tmp_link = conf.join("config.toml.link-tmp");
+        symlink(
+            "../../../dotfiles/host/.config/wpaperd/config.toml",
+            &tmp_link,
+        )
+        .unwrap();
+        fs::rename(&tmp_link, &link).unwrap();
+        wait_for_change(&mut watch, "retarget to missing file");
+        assert!(
+            !config.update(),
+            "missing new target must keep the last valid config"
+        );
+        settle(&mut watch, &mut config, "retarget to missing file");
+
+        fs::write(pkg2.join("config.toml"), content(3)).unwrap();
+        expect_reload(&mut watch, &mut config, 3, "creation of retargeted file");
     }
 
     #[test]
