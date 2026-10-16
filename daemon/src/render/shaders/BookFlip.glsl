@@ -18,12 +18,12 @@ vec4 addShade() {
   return vec4(vec3(shadeVal ), 1.0);
 }
 
-vec4 transition (vec2 p, vec2 prev_p) {
+vec4 transition (vec2 p) {
   float pr = step(1.0 - progress, p.x);
 
   if (p.x < 0.5) {
-    return mix(getFromColor(prev_p), getToColor(skewLeft(p)) * addShade(), pr);
+    return mix(getFromColor(p), getToColor(skewLeft(p)) * addShade(), pr);
   } else {
-    return mix(getFromColor(skewRight(prev_p)) * addShade(), getToColor(p), pr);
+    return mix(getFromColor(skewRight(p)) * addShade(), getToColor(p), pr);
   }
 }
