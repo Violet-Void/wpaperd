@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=https://cubic.dev/schema/cubic-repository-config.schema.json
+version: 1
+
+reviews:
+  sensitivity: low
+  incremental_commits: false
+  custom_instructions: |
+    Public repository: never disclose security-sensitive infrastructure detail in comments,
+    summaries or PR descriptions. This includes CI runner names, labels or hosts, self-hosted
+    runner setup, internal topology, secrets or tokens, missing trust checks, and how a weakness
+    could be reached or exploited. If you find such an issue, say only that a security concern
+    exists in the affected file, without specifics.
