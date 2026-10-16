@@ -237,6 +237,17 @@ impl ImagePickerSorting {
     }
 }
 
+/// How a reloaded output config affects the displayed and pending images.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceUpdate {
+    /// The current image is outside the new pool and must be replaced now.
+    pub replace_current: bool,
+    /// A pending list image belongs to the old pool and must not be drawn.
+    pub drop_pending: bool,
+    /// A new `Next` is needed. A dropped pending load already holds one.
+    pub queue_next: bool,
+}
+
 pub struct ImagePicker {
     current_img: PathBuf,
     actions: VecDeque<ImagePickerAction>,
@@ -247,6 +258,8 @@ pub struct ImagePicker {
     forced_image: Option<PathBuf>,
     /// True if the currently displayed image was set via `wpaperctl set`
     was_last_forced: bool,
+    /// `was_last_forced` before a forced image was taken, restored if that image fails to load
+    forced_fallback: bool,
 }
 
 impl ImagePicker {
@@ -270,6 +283,7 @@ impl ImagePicker {
             reload: false,
             forced_image: None,
             was_last_forced: false,
+            forced_fallback: false,
         }
     }
 
@@ -396,12 +410,10 @@ impl ImagePicker {
         // Check for forced image first (from wpaperctl set)
         // Don't update navigation state - forced images are "detours"
         if let Some(forced_path) = self.forced_image.take() {
+            self.forced_fallback = self.was_last_forced;
             self.was_last_forced = true;
             return Some(ImageResult::Forced(forced_path));
         }
-
-        // Clear flag for normal image loads
-        self.was_last_forced = false;
 
         if path.is_dir() {
             let files = self
@@ -447,6 +459,9 @@ impl ImagePicker {
                 path: img_path,
                 index,
             } => {
+                // A list image replaces the detour. An idle load pass that picks nothing new
+                // must not clear it.
+                self.was_last_forced = false;
                 match (self.actions.pop_front(), &mut self.sorting) {
                     (Some(ImagePickerAction::Next), ImagePickerSorting::Random(queue)) => {
                         queue.push(img_path.clone());
@@ -512,6 +527,12 @@ impl ImagePicker {
         }
     }
 
+    /// A forced image could not be loaded: the displayed image, and whether it is itself a
+    /// detour, are unchanged.
+    pub fn forced_load_failed(&mut self) {
+        self.was_last_forced = self.forced_fallback;
+    }
+
     /// Update wallpaper by going up 1 index through the cached image paths
     pub fn next_image(&mut self) {
         // Clear forced flag - next continues normal navigation
@@ -523,8 +544,37 @@ impl ImagePicker {
         self.current_img.clone()
     }
 
+    /// Apply a reloaded output config to the chooser.
+    ///
+    /// A changed pool always resets future navigation, so next/previous cannot return to images
+    /// of the old pool. The current image is replaced separately: only a drawn, non-forced image
+    /// outside the new pool. A pending list load from the old pool is dropped.
+    pub fn update_source(
+        &mut self,
+        old: &WallpaperInfo,
+        new: &WallpaperInfo,
+        pending: Option<&ImageResult>,
+        wl_surface: &WlSurface,
+        wallpaper_groups: &Rc<RefCell<WallpaperGroups>>,
+    ) -> SourceUpdate {
+        let pool_changed = pool_changed(old, new);
+        let replace_current = pool_changed
+            && !self.was_last_forced
+            && !self.current_img.as_os_str().is_empty()
+            && !pool_contains(&self.filelist_cache, new, &self.current_img);
+        let drop_pending = pool_changed
+            && matches!(pending, Some(ImageResult::FromList { path, .. })
+                if !pool_contains(&self.filelist_cache, new, path));
+        self.update_sorting(new, wl_surface, pool_changed, wallpaper_groups);
+        SourceUpdate {
+            replace_current,
+            drop_pending,
+            queue_next: replace_current && !(drop_pending && !self.actions.is_empty()),
+        }
+    }
+
     /// Return true if the path changed
-    pub fn update_sorting(
+    fn update_sorting(
         &mut self,
         wallpaper_info: &WallpaperInfo,
         wl_surface: &WlSurface,
@@ -539,15 +589,18 @@ impl ImagePicker {
                 | (ImagePickerSorting::Random(_), Sorting::Random)
                     if !path_changed => {}
                 (_, Sorting::Ascending) if path_changed => {
-                    self.sorting = ImagePickerSorting::new_ascending(
+                    let files_len = if wallpaper_info.path.is_dir() {
                         self.filelist_cache
                             .borrow()
                             .get(
                                 &wallpaper_info.path,
                                 wallpaper_info.recursive.unwrap_or_default(),
                             )
-                            .len(),
-                    );
+                            .len()
+                    } else {
+                        0
+                    };
+                    self.sorting = ImagePickerSorting::new_ascending(files_len);
                 }
                 (_, Sorting::Descending) if path_changed => {
                     self.sorting = ImagePickerSorting::new_descending();
@@ -560,11 +613,14 @@ impl ImagePicker {
                         Sorting::Descending => ImagePickerSorting::Descending(index),
                     };
                 }
-                // The path has changed, use a new random sorting, otherwise we reuse the current
-                // drawn_images
+                // The pool has changed, start a new history that keeps only a current image
+                // that is still in the pool, otherwise we reuse the current drawn_images
                 (_, Sorting::Random) if path_changed => {
-                    self.sorting =
-                        ImagePickerSorting::new_random(wallpaper_info.drawn_images_queue_size);
+                    let mut queue = Queue::with_capacity(wallpaper_info.drawn_images_queue_size);
+                    if pool_contains(&self.filelist_cache, wallpaper_info, &self.current_img) {
+                        queue.push(self.current_image());
+                    }
+                    self.sorting = ImagePickerSorting::Random(queue);
                 }
                 (_, Sorting::Random) => {
                     // if the path was not changed, use the current image as the first image of
@@ -573,19 +629,33 @@ impl ImagePicker {
                     queue.push(self.current_image());
                     self.sorting = ImagePickerSorting::Random(queue);
                 }
-                (_, Sorting::GroupedRandom { group }) if path_changed => {
-                    self.sorting = ImagePickerSorting::GroupedRandom(GroupedRandom::new(
-                        wallpaper_groups.clone(),
-                        group,
-                        wl_surface,
-                        wallpaper_info.drawn_images_queue_size,
-                    ));
-                }
                 // If the group is the same
                 (
                     ImagePickerSorting::GroupedRandom(grouped_random),
                     Sorting::GroupedRandom { group },
-                ) if grouped_random.group.borrow().group == group => {}
+                ) if grouped_random.group.borrow().group == group => {
+                    if path_changed {
+                        // Reset the shared history in place: replacing this GroupedRandom would
+                        // drop it, and its Drop removes this surface from the registered group.
+                        let mut shared = grouped_random.group.borrow_mut();
+                        let mut queue =
+                            Queue::with_capacity(wallpaper_info.drawn_images_queue_size);
+                        if pool_contains(
+                            &self.filelist_cache,
+                            wallpaper_info,
+                            &shared.current_image,
+                        ) {
+                            queue.push(shared.current_image.clone());
+                        }
+                        shared.queue = queue;
+                        // A shared pick from the old pool must not be handed out again.
+                        if shared.loading_image.as_ref().is_some_and(|path| {
+                            !pool_contains(&self.filelist_cache, wallpaper_info, path)
+                        }) {
+                            shared.loading_image = None;
+                        }
+                    }
+                }
                 (_, Sorting::GroupedRandom { group }) => {
                     let grouped_random = GroupedRandom::new(
                         wallpaper_groups.clone(),
@@ -595,10 +665,19 @@ impl ImagePicker {
                     );
 
                     let mut group = grouped_random.group.borrow_mut();
-                    // If there are no other surfaces, we must reuse the current wallpaper
+                    // If there are no other surfaces, we must reuse the current wallpaper. After a
+                    // pool change it only enters the history while it is still in the pool.
                     if group.surfaces.len() == 1 {
                         group.current_image = self.current_img.clone();
-                        group.queue.push(self.current_img.clone());
+                        if !path_changed
+                            || pool_contains(
+                                &self.filelist_cache,
+                                wallpaper_info,
+                                &self.current_img,
+                            )
+                        {
+                            group.queue.push(self.current_img.clone());
+                        }
                     }
 
                     drop(group);
@@ -656,6 +735,32 @@ impl ImagePicker {
 
     pub fn clear_first_action(&mut self) {
         self.actions.pop_front();
+    }
+}
+
+/// The pool is the configured path walked with its effective recursion.
+fn pool_changed(old: &WallpaperInfo, new: &WallpaperInfo) -> bool {
+    old.path != new.path
+        || (new.path.is_dir()
+            && old.recursive.unwrap_or_default() != new.recursive.unwrap_or_default())
+}
+
+fn pool_contains(
+    filelist_cache: &RefCell<FilelistCache>,
+    wallpaper_info: &WallpaperInfo,
+    image: &Path,
+) -> bool {
+    if wallpaper_info.path.is_dir() {
+        filelist_cache
+            .borrow()
+            .get(
+                &wallpaper_info.path,
+                wallpaper_info.recursive.unwrap_or_default(),
+            )
+            .iter()
+            .any(|path| path == image)
+    } else {
+        wallpaper_info.path == image
     }
 }
 
@@ -1013,5 +1118,636 @@ mod tests {
         state.previous_image();
         assert!(!state.reload);
         assert!(matches!(state.action, Some(ImagePickerAction::Previous)));
+    }
+}
+
+/// Reload regressions for Violet-Void/wpaperd#2: a changed pool must not keep old navigation.
+#[cfg(test)]
+mod pool_tests {
+    use std::{
+        fs,
+        os::unix::net::UnixStream,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    use smithay_client_toolkit::reexports::client::{backend::Backend, Proxy};
+
+    use super::*;
+
+    /// A unique real directory tree, removed on drop.
+    struct Tree(PathBuf);
+
+    impl Tree {
+        fn new(files: &[&str]) -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "wpaperd-pool-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir_all(&root).unwrap();
+            for file in files {
+                let path = root.join(file);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, b"").unwrap();
+            }
+            Self(root)
+        }
+
+        fn join(&self, relative: &str) -> PathBuf {
+            self.0.join(relative)
+        }
+    }
+
+    impl Drop for Tree {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Picker dependencies without a compositor. Inert surfaces all compare equal, so this
+    /// covers a single output per wallpaper group.
+    struct Harness {
+        _backend: Backend,
+        _peer: UnixStream,
+        surface: WlSurface,
+        groups: Rc<RefCell<WallpaperGroups>>,
+        cache: Rc<RefCell<FilelistCache>>,
+    }
+
+    fn harness(pools: &[(PathBuf, Recursive)]) -> Harness {
+        fastrand::seed(2);
+        let (stream, peer) = UnixStream::pair().unwrap();
+        let backend = Backend::connect(stream).unwrap();
+        let surface = WlSurface::inert(backend.downgrade());
+        Harness {
+            _backend: backend,
+            _peer: peer,
+            surface,
+            groups: Rc::new(RefCell::new(WallpaperGroups::new())),
+            cache: Rc::new(RefCell::new(FilelistCache::populated(pools))),
+        }
+    }
+
+    fn info(
+        path: PathBuf,
+        sorting: Option<Sorting>,
+        recursive: Option<Recursive>,
+    ) -> WallpaperInfo {
+        WallpaperInfo {
+            path,
+            sorting,
+            recursive,
+            ..Default::default()
+        }
+    }
+
+    fn picker(h: &Harness, info: &WallpaperInfo) -> ImagePicker {
+        ImagePicker::new(info, &h.surface, h.cache.clone(), h.groups.clone())
+    }
+
+    fn pool(h: &Harness, info: &WallpaperInfo) -> Vec<PathBuf> {
+        if info.path.is_dir() {
+            h.cache
+                .borrow()
+                .get(&info.path, info.recursive.unwrap_or_default())
+                .to_vec()
+        } else {
+            vec![info.path.clone()]
+        }
+    }
+
+    /// One `Surface::load_wallpaper` pass with an immediately loaded image.
+    fn draw(picker: &mut ImagePicker, info: &WallpaperInfo) -> PathBuf {
+        match picker.get_image_from_path(&info.path, &info.recursive) {
+            Some(_) if picker.is_reloading() => picker.reloaded(),
+            Some(result) => picker.update_current_image(result),
+            None => picker.clear_first_action(),
+        }
+        picker.current_image()
+    }
+
+    /// The picker half of `Surface::update_wallpaper_info`, with a still-pending load.
+    fn reload_pending(
+        h: &Harness,
+        picker: &mut ImagePicker,
+        old: &WallpaperInfo,
+        new: &WallpaperInfo,
+        pending: Option<ImageResult>,
+    ) -> SourceUpdate {
+        let update = picker.update_source(old, new, pending.as_ref(), &h.surface, &h.groups);
+        if update.replace_current || update.drop_pending {
+            if update.queue_next {
+                picker.next_image();
+            }
+            draw(picker, new);
+        }
+        update
+    }
+
+    fn reload(
+        h: &Harness,
+        picker: &mut ImagePicker,
+        old: &WallpaperInfo,
+        new: &WallpaperInfo,
+    ) -> bool {
+        reload_pending(h, picker, old, new, None).replace_current
+    }
+
+    /// Mixed previous/next navigation after a reload.
+    fn walk(picker: &mut ImagePicker, info: &WallpaperInfo) -> Vec<PathBuf> {
+        let mut seen = Vec::new();
+        for previous in [true, true, false, false, false, true, true] {
+            if previous {
+                picker.previous_image();
+            } else {
+                picker.next_image();
+            }
+            seen.push(draw(picker, info));
+        }
+        seen
+    }
+
+    fn assert_within(seen: &[PathBuf], pool: &[PathBuf]) {
+        for path in seen {
+            assert!(pool.contains(path), "stale image {path:?} outside {pool:?}");
+        }
+    }
+
+    /// Random history as left by earlier draws, ending on `current`.
+    fn seed_history(picker: &mut ImagePicker, history: &[PathBuf], current: &Path) {
+        let ImagePickerSorting::Random(queue) = &mut picker.sorting else {
+            panic!("expected random sorting");
+        };
+        for path in history {
+            queue.push(path.clone());
+        }
+        queue.set_current_to(current);
+        picker.current_img = current.to_path_buf();
+        picker.actions.clear();
+    }
+
+    fn build_history(picker: &mut ImagePicker, info: &WallpaperInfo) {
+        draw(picker, info);
+        for _ in 0..3 {
+            picker.next_image();
+            draw(picker, info);
+        }
+        // Leave the cursor inside the history so `next` can replay it too.
+        picker.previous_image();
+        draw(picker, info);
+    }
+
+    #[test]
+    fn pool_change_uses_path_and_effective_recursion() {
+        let root = Tree::new(&["a.png", "sub/b.png"]);
+        let file = root.join("a.png");
+        let dir = |path: &Path, recursive| info(path.to_path_buf(), None, recursive);
+        let same = [
+            (dir(&root.0, None), dir(&root.0, None)),
+            (dir(&root.0, None), dir(&root.0, Some(Recursive::On))),
+            (dir(&root.0, Some(Recursive::On)), dir(&root.0, None)),
+            // Recursion does not apply to a single file.
+            (dir(&file, None), dir(&file, Some(Recursive::Off))),
+        ];
+        for (old, new) in &same {
+            assert!(!pool_changed(old, new), "{old:?} -> {new:?}");
+        }
+        let changed = [
+            (dir(&root.0, None), dir(&root.0, Some(Recursive::Off))),
+            (dir(&root.0, Some(Recursive::Off)), dir(&root.0, None)),
+            (
+                dir(&root.0, Some(Recursive::On)),
+                dir(&root.0, Some(Recursive::Off)),
+            ),
+            (dir(&root.0, None), dir(&root.join("sub"), None)),
+            (dir(&root.join("sub"), None), dir(&root.0, None)),
+            (dir(&root.0, None), dir(&file, None)),
+            (dir(&file, None), dir(&root.0, None)),
+        ];
+        for (old, new) in &changed {
+            assert!(pool_changed(old, new), "{old:?} -> {new:?}");
+        }
+    }
+
+    #[test]
+    fn disjoint_pool_change_adopts_new_pool_without_stale_navigation() {
+        let a = Tree::new(&["a1.png", "a2.png", "a3.png", "a4.png"]);
+        let b = Tree::new(&["b1.png", "b2.png"]);
+        let h = harness(&[(a.0.clone(), Recursive::On), (b.0.clone(), Recursive::On)]);
+        let old = info(a.0.clone(), Some(Sorting::Random), None);
+        let new = info(b.0.clone(), Some(Sorting::Random), None);
+        let mut picker = picker(&h, &old);
+        build_history(&mut picker, &old);
+        assert!(pool(&h, &old).contains(&picker.current_image()));
+
+        reload(&h, &mut picker, &old, &new);
+
+        let b_pool = pool(&h, &new);
+        assert_within(&[picker.current_image()], &b_pool);
+        assert_within(&walk(&mut picker, &new), &b_pool);
+    }
+
+    #[test]
+    fn nested_narrower_pool_keeps_member_and_drops_outside_history() {
+        let root = Tree::new(&["x.png", "sub/y.png", "sub/z.png"]);
+        let sub = root.join("sub");
+        let h = harness(&[
+            (root.0.clone(), Recursive::On),
+            (sub.clone(), Recursive::On),
+        ]);
+        let old = info(root.0.clone(), Some(Sorting::Random), None);
+        let new = info(sub.clone(), Some(Sorting::Random), None);
+        let mut picker = picker(&h, &old);
+        let y = sub.join("y.png");
+        seed_history(&mut picker, &[root.join("x.png"), y.clone()], &y);
+
+        assert!(!reload(&h, &mut picker, &old, &new), "member image is kept");
+        assert_eq!(picker.current_image(), y);
+        assert_within(&walk(&mut picker, &new), &pool(&h, &new));
+    }
+
+    #[test]
+    fn nested_narrower_pool_replaces_non_member() {
+        let root = Tree::new(&["x.png", "sub/y.png", "sub/z.png"]);
+        let sub = root.join("sub");
+        let h = harness(&[
+            (root.0.clone(), Recursive::On),
+            (sub.clone(), Recursive::On),
+        ]);
+        let old = info(root.0.clone(), Some(Sorting::Random), None);
+        let new = info(sub.clone(), Some(Sorting::Random), None);
+        let mut picker = picker(&h, &old);
+        let x = root.join("x.png");
+        seed_history(&mut picker, &[sub.join("y.png"), x.clone()], &x);
+
+        reload(&h, &mut picker, &old, &new);
+
+        let sub_pool = pool(&h, &new);
+        assert_within(&[picker.current_image()], &sub_pool);
+        assert_within(&walk(&mut picker, &new), &sub_pool);
+    }
+
+    #[test]
+    fn nested_wider_pool_follows_effective_recursion() {
+        let root = Tree::new(&["x.png", "w.png", "sub/y.png"]);
+        let sub = root.join("sub");
+        let y = sub.join("y.png");
+        let h = harness(&[
+            (root.0.clone(), Recursive::On),
+            (root.0.clone(), Recursive::Off),
+            (sub.clone(), Recursive::On),
+        ]);
+        let old = info(sub.clone(), Some(Sorting::Random), None);
+
+        let wide = info(root.0.clone(), Some(Sorting::Random), None);
+        let mut kept = picker(&h, &old);
+        seed_history(&mut kept, std::slice::from_ref(&y), &y);
+        assert!(
+            !reload(&h, &mut kept, &old, &wide),
+            "recursive parent holds y"
+        );
+        assert_eq!(kept.current_image(), y);
+
+        let shallow = info(root.0.clone(), Some(Sorting::Random), Some(Recursive::Off));
+        let mut replaced = picker(&h, &old);
+        seed_history(&mut replaced, std::slice::from_ref(&y), &y);
+        reload(&h, &mut replaced, &old, &shallow);
+        let shallow_pool = pool(&h, &shallow);
+        assert_within(&[replaced.current_image()], &shallow_pool);
+        assert_within(&walk(&mut replaced, &shallow), &shallow_pool);
+    }
+
+    #[test]
+    fn recursion_only_change_adopts_shallow_pool() {
+        let root = Tree::new(&["top1.png", "top2.png", "sub/n1.png", "sub/n2.png"]);
+        let h = harness(&[
+            (root.0.clone(), Recursive::On),
+            (root.0.clone(), Recursive::Off),
+        ]);
+        // `None` is effectively `Recursive::On`.
+        let old = info(root.0.clone(), Some(Sorting::Random), None);
+        let new = info(root.0.clone(), Some(Sorting::Random), Some(Recursive::Off));
+        let history = [
+            root.join("top1.png"),
+            root.join("sub/n1.png"),
+            root.join("top2.png"),
+            root.join("sub/n2.png"),
+        ];
+        let shallow = pool(&h, &new);
+
+        let mut nested = picker(&h, &old);
+        seed_history(&mut nested, &history, &history[3]);
+        reload(&h, &mut nested, &old, &new);
+        assert_within(&[nested.current_image()], &shallow);
+        assert_within(&walk(&mut nested, &new), &shallow);
+
+        let mut top = picker(&h, &old);
+        seed_history(&mut top, &history, &history[2]);
+        assert!(!reload(&h, &mut top, &old, &new), "top-level image is kept");
+        assert_eq!(top.current_image(), history[2]);
+        assert_within(&walk(&mut top, &new), &shallow);
+    }
+
+    #[test]
+    fn explicit_default_recursion_keeps_history() {
+        let root = Tree::new(&["a.png", "b.png", "c.png"]);
+        let h = harness(&[(root.0.clone(), Recursive::On)]);
+        let old = info(root.0.clone(), Some(Sorting::Random), None);
+        let new = info(root.0.clone(), Some(Sorting::Random), Some(Recursive::On));
+        let mut picker = picker(&h, &old);
+        let history = [root.join("a.png"), root.join("b.png")];
+        seed_history(&mut picker, &history, &history[1]);
+
+        assert!(!reload(&h, &mut picker, &old, &new));
+        picker.previous_image();
+        assert_eq!(draw(&mut picker, &new), history[0], "history is unchanged");
+    }
+
+    #[test]
+    fn directory_to_file_and_back_replaces_current() {
+        let a = Tree::new(&["a1.png", "a2.png", "a3.png"]);
+        let single = Tree::new(&["only.png"]);
+        let b = Tree::new(&["b1.png", "b2.png"]);
+        let file = single.join("only.png");
+        let h = harness(&[(a.0.clone(), Recursive::On), (b.0.clone(), Recursive::On)]);
+        let dir_a = info(a.0.clone(), Some(Sorting::Random), None);
+        // Config rejects sorting for a file path.
+        let to_file = info(file.clone(), None, None);
+        let dir_b = info(b.0.clone(), Some(Sorting::Random), None);
+        let mut picker = picker(&h, &dir_a);
+        build_history(&mut picker, &dir_a);
+
+        reload(&h, &mut picker, &dir_a, &to_file);
+        assert_eq!(picker.current_image(), file);
+        assert_within(&walk(&mut picker, &to_file), std::slice::from_ref(&file));
+
+        reload(&h, &mut picker, &to_file, &dir_b);
+        let b_pool = pool(&h, &dir_b);
+        assert_within(&[picker.current_image()], &b_pool);
+        assert_within(&walk(&mut picker, &dir_b), &b_pool);
+    }
+
+    #[test]
+    fn ordered_sorting_adopts_new_pool() {
+        for sorting in [Sorting::Ascending, Sorting::Descending] {
+            let a = Tree::new(&["a1.png", "a2.png", "a3.png"]);
+            let b = Tree::new(&["b1.png", "b2.png", "b3.png"]);
+            let h = harness(&[(a.0.clone(), Recursive::On), (b.0.clone(), Recursive::On)]);
+            let old = info(a.0.clone(), Some(sorting), None);
+            let new = info(b.0.clone(), Some(sorting), None);
+            let mut picker = picker(&h, &old);
+            build_history(&mut picker, &old);
+
+            reload(&h, &mut picker, &old, &new);
+
+            let b_pool = pool(&h, &new);
+            assert_within(&[picker.current_image()], &b_pool);
+            assert_within(&walk(&mut picker, &new), &b_pool);
+        }
+    }
+
+    #[test]
+    fn sorting_and_pool_change_together() {
+        let a = Tree::new(&["a1.png", "a2.png", "a3.png"]);
+        let b = Tree::new(&["b1.png", "b2.png", "b3.png"]);
+        let h = harness(&[(a.0.clone(), Recursive::On), (b.0.clone(), Recursive::On)]);
+        let old = info(a.0.clone(), Some(Sorting::Random), None);
+        let new = info(b.0.clone(), Some(Sorting::Ascending), None);
+        let mut picker = picker(&h, &old);
+        build_history(&mut picker, &old);
+
+        reload(&h, &mut picker, &old, &new);
+
+        let b_pool = pool(&h, &new);
+        assert_within(&[picker.current_image()], &b_pool);
+        assert_within(&walk(&mut picker, &new), &b_pool);
+    }
+
+    #[test]
+    fn grouped_pool_change_resets_shared_history_in_place() {
+        let a = Tree::new(&["a1.png", "a2.png", "a3.png", "a4.png"]);
+        let b = Tree::new(&["b1.png", "b2.png"]);
+        let h = harness(&[(a.0.clone(), Recursive::On), (b.0.clone(), Recursive::On)]);
+        let grouped = Some(Sorting::GroupedRandom { group: 3 });
+        let old = info(a.0.clone(), grouped, None);
+        let new = info(b.0.clone(), grouped, None);
+        let mut picker = picker(&h, &old);
+        build_history(&mut picker, &old);
+
+        reload(&h, &mut picker, &old, &new);
+
+        let ImagePickerSorting::GroupedRandom(grouped) = &picker.sorting else {
+            panic!("expected grouped sorting");
+        };
+        let registered = h.groups.borrow_mut().get_or_insert(3, &h.surface, 10);
+        assert!(
+            Rc::ptr_eq(&grouped.group, &registered),
+            "group stays registered"
+        );
+        assert_eq!(registered.borrow().surfaces.len(), 1);
+        let b_pool = pool(&h, &new);
+        assert_within(&[picker.current_image()], &b_pool);
+        assert_within(&walk(&mut picker, &new), &b_pool);
+    }
+
+    #[test]
+    fn pool_change_into_new_group_seeds_it_from_this_output() {
+        let root = Tree::new(&["a1.png", "a2.png", "sub/b1.png", "sub/b2.png"]);
+        let sub = root.join("sub");
+        let h = harness(&[
+            (root.0.clone(), Recursive::On),
+            (sub.clone(), Recursive::On),
+        ]);
+        let old = info(root.0.clone(), Some(Sorting::Random), None);
+        let new = info(sub.clone(), Some(Sorting::GroupedRandom { group: 7 }), None);
+        let sub_pool = pool(&h, &new);
+        let (a1, b1) = (root.join("a1.png"), sub.join("b1.png"));
+
+        for (current, replaced) in [(a1.clone(), true), (b1.clone(), false)] {
+            let mut picker = picker(&h, &old);
+            seed_history(&mut picker, &[a1.clone(), b1.clone()], &current);
+
+            assert_eq!(reload(&h, &mut picker, &old, &new), replaced);
+            if !replaced {
+                assert_eq!(picker.current_image(), b1);
+            }
+            let ImagePickerSorting::GroupedRandom(grouped) = &picker.sorting else {
+                panic!("expected grouped sorting");
+            };
+            assert_eq!(grouped.group.borrow().current_image, picker.current_image());
+            assert_within(&[picker.current_image()], &sub_pool);
+            assert_within(&walk(&mut picker, &new), &sub_pool);
+        }
+    }
+
+    #[test]
+    fn forced_detour_survives_reload_and_navigation_uses_new_pool() {
+        let a = Tree::new(&["a1.png", "a2.png", "a3.png", "a4.png"]);
+        let b = Tree::new(&["b1.png", "b2.png"]);
+        let forced = Tree::new(&["forced.png"]);
+        let forced = forced.join("forced.png");
+        let h = harness(&[(a.0.clone(), Recursive::On), (b.0.clone(), Recursive::On)]);
+        let old = info(a.0.clone(), Some(Sorting::Random), None);
+        let new = info(b.0.clone(), Some(Sorting::Random), None);
+        let mut picker = picker(&h, &old);
+        build_history(&mut picker, &old);
+        picker.set_image(forced.clone());
+        assert_eq!(draw(&mut picker, &old), forced);
+        // Another output's decode runs an idle load pass on this one.
+        assert_eq!(draw(&mut picker, &old), forced);
+
+        assert!(!reload(&h, &mut picker, &old, &new), "explicit set is kept");
+        assert_eq!(picker.current_image(), forced);
+
+        let mut allowed = pool(&h, &new);
+        allowed.push(forced.clone());
+        // Detour return redisplays the current position, which is no longer in A.
+        picker.previous_image();
+        assert_within(&[draw(&mut picker, &new)], &allowed);
+        picker.next_image();
+        assert_within(&[draw(&mut picker, &new)], &pool(&h, &new));
+        assert_within(&walk(&mut picker, &new), &pool(&h, &new));
+    }
+
+    #[test]
+    fn failed_set_does_not_block_replacement() {
+        let a = Tree::new(&["a1.png", "a2.png", "a3.png"]);
+        let b = Tree::new(&["b1.png", "b2.png"]);
+        let h = harness(&[(a.0.clone(), Recursive::On), (b.0.clone(), Recursive::On)]);
+        let old = info(a.0.clone(), Some(Sorting::Random), None);
+        let new = info(b.0.clone(), Some(Sorting::Random), None);
+        let mut picker = picker(&h, &old);
+        build_history(&mut picker, &old);
+        let shown = picker.current_image();
+
+        // `Surface::load_wallpaper` gets an undecodable forced image and retries the list.
+        picker.set_image(a.join("broken.png"));
+        let forced = picker.get_image_from_path(&old.path, &old.recursive);
+        assert!(matches!(forced, Some(ImageResult::Forced(_))));
+        picker.forced_load_failed();
+        assert_eq!(draw(&mut picker, &old), shown);
+
+        assert!(
+            reload(&h, &mut picker, &old, &new),
+            "old-pool image is replaced"
+        );
+        assert_within(&[picker.current_image()], &pool(&h, &new));
+    }
+
+    #[test]
+    fn failed_set_over_a_set_keeps_the_first_detour() {
+        let a = Tree::new(&["a1.png", "a2.png", "a3.png"]);
+        let b = Tree::new(&["b1.png", "b2.png"]);
+        let forced = Tree::new(&["good.png"]);
+        let good = forced.join("good.png");
+        let h = harness(&[(a.0.clone(), Recursive::On), (b.0.clone(), Recursive::On)]);
+        let old = info(a.0.clone(), Some(Sorting::Random), None);
+        let new = info(b.0.clone(), Some(Sorting::Random), None);
+        let mut picker = picker(&h, &old);
+        build_history(&mut picker, &old);
+        picker.set_image(good.clone());
+        assert_eq!(draw(&mut picker, &old), good);
+
+        picker.set_image(forced.join("broken.png"));
+        let failed = picker.get_image_from_path(&old.path, &old.recursive);
+        assert!(matches!(failed, Some(ImageResult::Forced(_))));
+        picker.forced_load_failed();
+        assert_eq!(draw(&mut picker, &old), good);
+
+        assert!(!reload(&h, &mut picker, &old, &new), "first set is kept");
+        assert_eq!(picker.current_image(), good);
+        picker.previous_image();
+        assert!(picker.is_reloading(), "previous is still a detour return");
+    }
+
+    #[test]
+    fn pending_old_pool_load_is_dropped_without_double_advance() {
+        let root = Tree::new(&["x.png", "w.png", "sub/y.png", "sub/z.png"]);
+        let sub = root.join("sub");
+        let h = harness(&[
+            (root.0.clone(), Recursive::On),
+            (sub.clone(), Recursive::On),
+        ]);
+        let old = info(root.0.clone(), Some(Sorting::Random), None);
+        let new = info(sub.clone(), Some(Sorting::Random), None);
+        let sub_pool = pool(&h, &new);
+        let pending = || ImageResult::FromList {
+            path: root.join("w.png"),
+            index: None,
+        };
+
+        // Kept current image: the user's pending `next` is served from the new pool.
+        let mut kept = picker(&h, &old);
+        let y = sub.join("y.png");
+        seed_history(&mut kept, &[root.join("x.png"), y.clone()], &y);
+        kept.next_image();
+        let update = reload_pending(&h, &mut kept, &old, &new, Some(pending()));
+        assert!(update.drop_pending && !update.replace_current && !update.queue_next);
+        assert_ne!(kept.current_image(), y, "pending next still advances");
+        assert_within(&[kept.current_image()], &sub_pool);
+        assert!(kept.actions.is_empty(), "exactly one advance");
+
+        // Replaced current image: the pending action is reused, not doubled.
+        let mut replaced = picker(&h, &old);
+        let x = root.join("x.png");
+        seed_history(&mut replaced, &[y.clone(), x.clone()], &x);
+        replaced.next_image();
+        let update = reload_pending(&h, &mut replaced, &old, &new, Some(pending()));
+        assert!(update.drop_pending && update.replace_current && !update.queue_next);
+        assert_within(&[replaced.current_image()], &sub_pool);
+        assert!(replaced.actions.is_empty(), "exactly one advance");
+        assert_within(&walk(&mut replaced, &new), &sub_pool);
+
+        // A pending image that is still in the pool is kept.
+        let mut member = picker(&h, &old);
+        seed_history(&mut member, std::slice::from_ref(&x), &x);
+        member.next_image();
+        let in_pool = ImageResult::FromList {
+            path: sub.join("z.png"),
+            index: None,
+        };
+        let update = member.update_source(&old, &new, Some(&in_pool), &h.surface, &h.groups);
+        assert!(!update.drop_pending);
+    }
+
+    #[test]
+    fn grouped_reset_drops_shared_pending_pick_from_old_pool() {
+        let a = Tree::new(&["a1.png", "a2.png", "a3.png", "a4.png"]);
+        let b = Tree::new(&["b1.png", "b2.png"]);
+        let h = harness(&[(a.0.clone(), Recursive::On), (b.0.clone(), Recursive::On)]);
+        let grouped = Some(Sorting::GroupedRandom { group: 4 });
+        let old = info(a.0.clone(), grouped, None);
+        let new = info(b.0.clone(), grouped, None);
+        let mut picker = picker(&h, &old);
+        build_history(&mut picker, &old);
+        let ImagePickerSorting::GroupedRandom(group) = &picker.sorting else {
+            panic!("expected grouped sorting");
+        };
+        // Another group member started loading an old-pool image.
+        group.group.borrow_mut().loading_image = Some(a.join("a4.png"));
+
+        reload(&h, &mut picker, &old, &new);
+
+        let b_pool = pool(&h, &new);
+        assert_within(&[picker.current_image()], &b_pool);
+        assert_within(&walk(&mut picker, &new), &b_pool);
+    }
+
+    #[test]
+    fn reload_before_first_draw_does_not_double_advance() {
+        let a = Tree::new(&["a1.png", "a2.png"]);
+        let b = Tree::new(&["b1.png", "b2.png"]);
+        let h = harness(&[(a.0.clone(), Recursive::On), (b.0.clone(), Recursive::On)]);
+        let old = info(a.0.clone(), Some(Sorting::Random), None);
+        let new = info(b.0.clone(), Some(Sorting::Random), None);
+        let mut picker = picker(&h, &old);
+
+        assert!(
+            !reload(&h, &mut picker, &old, &new),
+            "first draw is still pending"
+        );
+        assert_within(&[draw(&mut picker, &new)], &pool(&h, &new));
+        assert!(picker.actions.is_empty());
     }
 }
