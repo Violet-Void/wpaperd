@@ -606,7 +606,7 @@ def transition_reload(args):
 
         def config_text(transition):
             return ('[default]\npath=' + json.dumps(str(pool)) + '\nmode="stretch"\n'
-                    'sorting="ascending"\ntransition-time=6000\ninitial-transition=false\n'
+                    'sorting="ascending"\ntransition-time=12000\ninitial-transition=false\n'
                     '[default.transition.' + transition + ']\n').ljust(4096)
 
         config.write_text(config_text(RELOAD_TRANSITIONS[0]))
@@ -643,24 +643,33 @@ def transition_reload(args):
         for step in range(1, 4):
             # One IPC call starts a transition on every output at the same moment.
             cli("next")
+            started = time.monotonic()
             time.sleep(.5)
+            label = "round-" + str(step)
+            color = RELOAD_COLORS[step % len(RELOAD_COLORS)]
+            # The new colour must not be complete yet: the reload has to land in flight.
+            in_flight = not settled(label + "-before-reload", color)
             # Rewrite the table in place; hotwatch delivers it about 2 s later, mid-transition.
             with config.open("r+") as stream:
                 stream.write(config_text(RELOAD_TRANSITIONS[step]))
                 stream.flush()
-            # Applying the reload ends the transitions early. At ~4.3 s an unapplied 6 s
-            # transition is still mid-way, so an exact frame here proves the swap happened.
-            time.sleep(3.8)
-            label = "round-" + str(step)
-            color = RELOAD_COLORS[step % len(RELOAD_COLORS)]
-            applied = settled(label + "-applied", color)
-            time.sleep(2.7)
+            # Applying the reload ends the transitions early. Before 11 s an unapplied 12 s
+            # transition is still mid-way, so an exact frame proves the swap happened. Poll
+            # instead of assuming the hotwatch delivery delay.
+            while not (applied := settled(label + "-applied", color)):
+                if time.monotonic() - started > 11:
+                    break
+                time.sleep(.25)
+            result.setdefault("applied_after_seconds", []).append(
+                round(time.monotonic() - started, 2))
+            time.sleep(.5)
             drawn = settled(label, color)
             result["rounds"].append({"round": step, "transition": RELOAD_TRANSITIONS[step],
-                                     "applied": applied, "drawn": drawn})
+                                     "in_flight": in_flight, "applied": applied, "drawn": drawn})
         status = json.loads(cli("status", "--json"))
         result["status"] = [s.get("status") for s in status]
         assert all(r["drawn"] for r in result["rounds"]), "Output left undrawn after reload"
+        assert all(r["in_flight"] for r in result["rounds"]), "Transition finished before reload"
         assert all(r["applied"] for r in result["rounds"]), "Reload not applied mid-transition"
         assert daemon.poll() is None, "Daemon exited during transition reloads"
         text = (root / "daemon.log").read_text(errors="replace")
