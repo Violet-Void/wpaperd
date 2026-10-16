@@ -247,6 +247,8 @@ pub struct ImagePicker {
     forced_image: Option<PathBuf>,
     /// True if the currently displayed image was set via `wpaperctl set`
     was_last_forced: bool,
+    /// `was_last_forced` before a forced image was taken, restored if that image fails to load
+    forced_fallback: bool,
 }
 
 impl ImagePicker {
@@ -270,6 +272,7 @@ impl ImagePicker {
             reload: false,
             forced_image: None,
             was_last_forced: false,
+            forced_fallback: false,
         }
     }
 
@@ -396,6 +399,7 @@ impl ImagePicker {
         // Check for forced image first (from wpaperctl set)
         // Don't update navigation state - forced images are "detours"
         if let Some(forced_path) = self.forced_image.take() {
+            self.forced_fallback = self.was_last_forced;
             self.was_last_forced = true;
             return Some(ImageResult::Forced(forced_path));
         }
@@ -510,6 +514,12 @@ impl ImagePicker {
         } else {
             self.actions.push_back(ImagePickerAction::Previous);
         }
+    }
+
+    /// A forced image could not be loaded: the displayed image, and whether it is itself a
+    /// detour, are unchanged.
+    pub fn forced_load_failed(&mut self) {
+        self.was_last_forced = self.forced_fallback;
     }
 
     /// Update wallpaper by going up 1 index through the cached image paths
@@ -1561,6 +1571,57 @@ mod pool_tests {
         picker.next_image();
         assert_within(&[draw(&mut picker, &new)], &pool(&h, &new));
         assert_within(&walk(&mut picker, &new), &pool(&h, &new));
+    }
+
+    #[test]
+    fn failed_set_does_not_block_replacement() {
+        let a = Tree::new(&["a1.png", "a2.png", "a3.png"]);
+        let b = Tree::new(&["b1.png", "b2.png"]);
+        let h = harness(&[(a.0.clone(), Recursive::On), (b.0.clone(), Recursive::On)]);
+        let old = info(a.0.clone(), Some(Sorting::Random), None);
+        let new = info(b.0.clone(), Some(Sorting::Random), None);
+        let mut picker = picker(&h, &old);
+        build_history(&mut picker, &old);
+        let shown = picker.current_image();
+
+        // `Surface::load_wallpaper` gets an undecodable forced image and retries the list.
+        picker.set_image(a.join("broken.png"));
+        let forced = picker.get_image_from_path(&old.path, &old.recursive);
+        assert!(matches!(forced, Some(ImageResult::Forced(_))));
+        picker.forced_load_failed();
+        assert_eq!(draw(&mut picker, &old), shown);
+
+        assert!(
+            reload(&h, &mut picker, &old, &new),
+            "old-pool image is replaced"
+        );
+        assert_within(&[picker.current_image()], &pool(&h, &new));
+    }
+
+    #[test]
+    fn failed_set_over_a_set_keeps_the_first_detour() {
+        let a = Tree::new(&["a1.png", "a2.png", "a3.png"]);
+        let b = Tree::new(&["b1.png", "b2.png"]);
+        let forced = Tree::new(&["good.png"]);
+        let good = forced.join("good.png");
+        let h = harness(&[(a.0.clone(), Recursive::On), (b.0.clone(), Recursive::On)]);
+        let old = info(a.0.clone(), Some(Sorting::Random), None);
+        let new = info(b.0.clone(), Some(Sorting::Random), None);
+        let mut picker = picker(&h, &old);
+        build_history(&mut picker, &old);
+        picker.set_image(good.clone());
+        assert_eq!(draw(&mut picker, &old), good);
+
+        picker.set_image(forced.join("broken.png"));
+        let failed = picker.get_image_from_path(&old.path, &old.recursive);
+        assert!(matches!(failed, Some(ImageResult::Forced(_))));
+        picker.forced_load_failed();
+        assert_eq!(draw(&mut picker, &old), good);
+
+        assert!(!reload(&h, &mut picker, &old, &new), "first set is kept");
+        assert_eq!(picker.current_image(), good);
+        picker.previous_image();
+        assert!(picker.is_reloading(), "previous is still a detour return");
     }
 
     #[test]

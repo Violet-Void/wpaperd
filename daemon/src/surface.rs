@@ -496,7 +496,10 @@ impl Surface {
                 // We don't want to try too many times
                 self.loading_image_tries += 1;
                 // The image we were trying to load failed
-                self.loading_image = None;
+                if let Some(ImageResult::Forced(_)) = self.loading_image.take() {
+                    // A failed set never replaced the displayed image
+                    self.image_picker.forced_load_failed();
+                }
                 // If we have tried too many times, stop
                 if self.loading_image_tries != 5 {
                     return self.load_wallpaper();
