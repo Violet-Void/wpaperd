@@ -190,9 +190,9 @@ impl Renderer {
         offset: Option<f32>,
         display_info: &DisplayInfo,
     ) -> Result<()> {
-        unsafe {
-            self.gl.UseProgram(self.program);
-        }
+        // Wrap modes go to whatever is bound on units 0 and 1; after a scene draw TEXTURE1 holds
+        // a sprite, so bind the still textures (and program) first.
+        unsafe { self.restore_still()? };
         let display_width = display_info.scaled_width() as f32;
         let display_height = display_info.scaled_height() as f32;
         let display_ratio = display_width / display_height;
@@ -407,9 +407,8 @@ impl Renderer {
                     }
                 }
                 // Without textureScale the shader samples one border texel: a flat dark frame.
-                // Bind the still textures first so wrap modes never land on scene sprites.
-                if let Err(err) = unsafe { self.restore_still() }
-                    .and_then(|_| self.set_mode(mode, offset, display_info))
+                if let Err(err) = self
+                    .set_mode(mode, offset, display_info)
                     .wrap_err("Failed to restore the wallpaper mode for the new transition")
                 {
                     error!("{err:?}");
@@ -857,6 +856,16 @@ mod transition_program_tests {
             }
             assert_eq!(d.parameterized, BTreeSet::from([101, 102]));
         });
+        // Direct mode changes (reload, resize, transform) must also skip a bound sprite.
+        DRIVER.with(|d| {
+            let mut d = d.borrow_mut();
+            (d.unit, d.bound) = (1, [0, 50]);
+            d.parameterized.clear();
+        });
+        renderer
+            .set_mode(BackgroundMode::Tile, None, &display)
+            .unwrap();
+        DRIVER.with(|d| assert_eq!(d.borrow().parameterized, BTreeSet::from([101, 102])));
         renderer.disarm_resources();
     }
 }
