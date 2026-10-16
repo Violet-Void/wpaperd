@@ -2712,6 +2712,7 @@ dependencies = [
  "log",
  "new_mime_guess",
  "nix",
+ "notify-debouncer-full",
  "num-rational",
  "num-traits",
  "png",
