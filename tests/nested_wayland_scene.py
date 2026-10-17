@@ -3,6 +3,8 @@
 
 Run with /usr/bin/python3 tests/nested_wayland_scene.py --binaries target/debug.
 --scenario transition-reload instead checks still transitions reloaded on four outputs.
+--scenario pause-reload, set-reload or group-set-reload changes the still pool on four
+outputs under explicit pause, per-output set and grouped sorting (wpaperd #2).
 Needs kwin_wayland, dbus-run-session, python-dbus, Pillow and PySide6.QtGui.
 Uses synthetic assets, private HOME/XDG directories and a private session bus.
 Does not exercise physical hotplug, host services or desktop rollout.
@@ -691,21 +693,387 @@ def transition_reload(args):
     print(json.dumps(result, indent=2))
 
 
+POOL_OUTPUTS = ["Virtual-" + str(i) for i in range(4)]
+# Every image has a unique solid colour, so a capture names the file each output shows.
+POOL_COLORS = {"a": [(200, 40, 40), (200, 120, 40), (200, 200, 40)],
+               "b": [(40, 160, 200), (40, 80, 200), (100, 40, 200)],
+               "c": [(40, 200, 80), (120, 200, 120), (20, 120, 60)],
+               "probe": [(250, 250, 250), (10, 10, 10), (128, 128, 128), (250, 0, 250)],
+               "final": [(90, 60, 30), (30, 60, 90), (60, 90, 30), (90, 30, 60)]}
+
+
+class PrivateDaemon:
+    """One owned daemon on the private KWin, with logged wpaperctl and per-output captures."""
+
+    def __init__(self, args, root, shot, log, commands):
+        self.args, self.root, self.shot, self.log, self.commands = args, root, shot, log, commands
+        self.config = root / "config.toml"
+        self.socket = Path(os.environ["XDG_RUNTIME_DIR"]) / "wpaperd.sock"
+        self.process = None
+        self.colors = {}
+        self.captures = 0
+        for name, colors in POOL_COLORS.items():
+            folder = root / name
+            folder.mkdir()
+            for i, color in enumerate(colors):
+                path = folder / (str(i) + ".png")
+                from PIL import Image
+                Image.new("RGBA", (800, 600), (*color, 255)).save(path)
+                self.colors[str(path)] = color
+
+    def pool(self, name):
+        return self.root / name
+
+    def files(self, name):
+        return [str(self.pool(name) / (str(i) + ".png")) for i in range(len(POOL_COLORS[name]))]
+
+    def save(self, text):
+        # In place on the watched inode, like the dotfiles config owner; padding keeps the
+        # file length fixed so the watcher never parses a truncated config.
+        with self.config.open("r+" if self.config.exists() else "w") as stream:
+            stream.write(text.ljust(4096))
+            stream.flush()
+
+    def start(self, text):
+        self.stop()
+        self.save(text)
+        self.process = subprocess.Popen(
+            [str(self.args.binaries / "wpaperd"), "--config", str(self.config), "--verbose"],
+            stdout=self.log, stderr=subprocess.STDOUT, start_new_session=True)
+        deadline = time.monotonic() + 15
+        while not self.socket.exists():
+            assert self.process.poll() is None, "Private daemon exited before IPC readiness"
+            assert time.monotonic() < deadline, "Daemon IPC timeout"
+            time.sleep(.1)
+        # The socket is bound before output events are dispatched; wait for every output.
+        while True:
+            proc = subprocess.run([str(self.args.binaries / "wpaperctl"), "status", "--json"],
+                                  capture_output=True, text=True, timeout=10)
+            if proc.returncode == 0 and len(json.loads(proc.stdout)) == len(POOL_OUTPUTS):
+                return
+            assert self.process.poll() is None and time.monotonic() < deadline, proc.stderr
+            time.sleep(.1)
+
+    def stop(self):
+        stop_owned(self.process)
+        # Only the exited test daemon owned this socket in the private runtime.
+        self.socket.unlink(missing_ok=True)
+
+    def cli(self, *values):
+        proc = subprocess.run([str(self.args.binaries / "wpaperctl"), *map(str, values)],
+                              capture_output=True, text=True, timeout=10)
+        self.commands.write(json.dumps({"args": list(map(str, values)), "exit": proc.returncode,
+                                        "stdout": proc.stdout, "stderr": proc.stderr}) + "\n")
+        self.commands.flush()
+        assert proc.returncode == 0, proc.stderr + proc.stdout
+        return proc.stdout
+
+    def current(self):
+        return {name: self.cli("get", name).strip() for name in POOL_OUTPUTS}
+
+    def status(self):
+        return {s["display"]: s for s in json.loads(self.cli("status", "--json"))}
+
+    def drawn(self, label):
+        """The file each output shows, decoded from its capture; None for a mixed frame."""
+        seen = {}
+        self.captures += 1
+        for i, name in enumerate(POOL_OUTPUTS):
+            image = self.shot(label + "-" + name, i)
+            colors = image.getcolors(1 << 20)
+            if len(colors) != 1:
+                seen[name] = None
+                continue
+            color = colors[0][1]
+            seen[name] = next((p for p, c in self.colors.items() if c == color), "unknown" + str(color))
+        return seen
+
+    def wait(self, label, predicate, timeout=8):
+        """Poll getters and captures until predicate(current, drawn) holds."""
+        deadline = time.monotonic() + timeout
+        while True:
+            assert self.process.poll() is None, "Daemon exited during " + label
+            current = self.current()
+            drawn = self.drawn(label)
+            if predicate(current, drawn):
+                return current, drawn
+            assert time.monotonic() < deadline, label + ": current=" + json.dumps(current) + \
+                " drawn=" + json.dumps(drawn)
+            time.sleep(.25)
+
+    def assert_clean_log(self):
+        assert self.process.poll() is None, "Daemon exited during scenario"
+        text = (self.root / "daemon.log").read_text(errors="replace")
+        marker = re.search(r"\b(?:ERROR|WARN|WARNING|panicked)\b|protocol\s+error|failed\s+to\s+draw",
+                           text, re.IGNORECASE)
+        assert marker is None, "Fresh daemon log error: " + marker.group(0)
+
+
+def pool_scenario(args, body):
+    """Run body(daemon, result) on four private KWin outputs and record result.json."""
+    root = args.inside
+    def interrupted(signum, frame):
+        raise SystemExit("Private test interrupted")
+    signal.signal(signal.SIGTERM, interrupted)
+    logs = [open(root / name, "wb") for name in ("compositor.log", "daemon.log")]
+    compositor = daemon = None
+    result = {"scenario": args.scenario, "passed": False, "evidence": str(root),
+              "binaries": str(args.binaries)}
+    commands = open(root / "commands.log", "w")
+    try:
+        compositor = start_kwin(logs[0], len(POOL_OUTPUTS))
+        shot = kwin_capture(root, compositor)
+        daemon = PrivateDaemon(args, root, shot, logs[1], commands)
+        body(daemon, result)
+        daemon.assert_clean_log()
+        result["passed"] = True
+    except Exception as err:
+        result["failure"] = type(err).__name__ + ": " + str(err)
+        raise
+    finally:
+        if daemon is not None:
+            daemon.stop()
+        stop_owned(compositor)
+        for log in logs:
+            log.close()
+        commands.close()
+        write_json(root / "result.json", result)
+        print(json.dumps(result, indent=2))
+
+
+def pause_reload(daemon, result):
+    """Explicitly paused outputs keep their pause state across a pool change (#2).
+
+    The defined current-image replacement still applies: a paused output whose image left the
+    pool shows a new-pool image. Pause status, the held timer and navigation stay paused.
+    """
+    a, b = daemon.files("a"), daemon.files("b")
+    paused, running = POOL_OUTPUTS[:2], POOL_OUTPUTS[2:]
+    def config(pool):
+        return ('[default]\npath=' + json.dumps(str(daemon.pool(pool))) + '\nmode="stretch"\n'
+                'sorting="ascending"\nduration="2s"\ntransition-time=0\n'
+                'initial-transition=false\n' +
+                # A longer period proves both an exact held remainder and no advance while held.
+                ''.join('[' + n + ']\nduration="5s"\n' for n in paused))
+    daemon.start(config("a"))
+    daemon.wait("initial", lambda cur, drawn: all(cur[n] in a and drawn[n] == cur[n]
+                                                  for n in POOL_OUTPUTS))
+    # Let part of the period elapse, so a timer reset to the full period is visible.
+    time.sleep(1.5)
+    daemon.cli("pause", *paused)
+    time.sleep(.3)
+    before = daemon.status()
+    result["paused_status_before"] = {n: before[n] for n in paused}
+    assert all(before[n]["status"] == "paused" for n in paused), before
+    held = {n: before[n]["duration_left"] for n in paused}
+    assert all(held[n] not in (None, "5s") for n in paused), held
+
+    daemon.save(config("b"))
+    current, drawn = daemon.wait(
+        "pool-b-adopted", lambda cur, drawn: all(cur[n] in b and drawn[n] == cur[n]
+                                                 for n in POOL_OUTPUTS))
+    result["adopted"] = current
+    after = daemon.status()
+    result["paused_status_after"] = {n: after[n] for n in paused}
+    for n in paused:
+        assert after[n]["status"] == "paused", after
+        # Timer state is untouched: the held remainder (whole seconds) is the pre-reload value.
+        assert after[n]["duration_left"] == held[n], (n, held[n], after[n])
+
+    # Paused outputs never advance past their period; running outputs prove timers still fire.
+    adopted = current
+    time.sleep(5.5)
+    current, drawn = daemon.wait("held-while-paused", lambda cur, drawn: all(
+        drawn[n] == cur[n] for n in POOL_OUTPUTS))
+    for n in paused:
+        assert current[n] == adopted[n], ("paused output advanced", n, adopted[n], current[n])
+    assert all(current[n] in b for n in running), current
+    assert any(current[n] != adopted[n] for n in running), ("running outputs never advanced", current)
+    result["running_advanced"] = {n: [adopted[n], current[n]] for n in running}
+
+    # Navigation stays inside the new pool and does not lift an explicit pause.
+    visited = []
+    for action in ("next", "previous", "previous", "previous", "next"):
+        prior = daemon.current()
+        daemon.cli(action, *paused)
+        current, _ = daemon.wait(action + "-paused", lambda cur, drawn: all(
+            cur[n] != prior[n] and drawn[n] == cur[n] for n in paused))
+        visited.append({n: current[n] for n in paused})
+        assert all(current[n] in b for n in paused), ("navigation left pool B", action, current)
+        status = daemon.status()
+        assert all(status[n]["status"] == "paused" for n in paused), (action, status)
+    result["paused_navigation"] = visited
+    daemon.cli("resume", *paused)
+    time.sleep(.3)
+    status = daemon.status()
+    assert all(status[n]["status"] == "running" for n in POOL_OUTPUTS), status
+
+
+def set_reload(daemon, result):
+    """A coordinated per-output set survives a pool reload (#2).
+
+    Mirrors dotfiles wallpaper-cache-sync activate_selection: pause, set a unique image per
+    output, reload into a new pool, navigate into it, set final images, resume. Virtual-3 stays
+    paused and unset, so its adoption of the new pool signals the applied reload while every
+    other output shows a forced image.
+    """
+    b, c = daemon.files("b"), daemon.files("c")
+    probes, finals = daemon.files("probe"), daemon.files("final")
+    outputs, control = POOL_OUTPUTS[:3], POOL_OUTPUTS[3]
+    def config(pool):
+        return ('[default]\npath=' + json.dumps(str(daemon.pool(pool))) + '\nmode="stretch"\n'
+                'duration="2s"\ntransition-time=0\ninitial-transition=false\n')
+    daemon.start(config("b"))
+    daemon.wait("initial", lambda cur, drawn: all(
+        cur[n] in b and drawn[n] == cur[n] for n in POOL_OUTPUTS))
+    daemon.cli("pause", *POOL_OUTPUTS)
+
+    def set_each(images, label):
+        expected = dict(zip(outputs, images))
+        for n, image in expected.items():
+            daemon.cli("set", image, n)
+        daemon.wait(label, lambda cur, drawn: all(
+            cur[n] == expected[n] and drawn[n] == expected[n] for n in outputs))
+        # Each set decode pings every output. Hold through further passes and timer periods.
+        time.sleep(2.5)
+        current, drawn = daemon.wait(label + "-held", lambda cur, drawn: all(
+            drawn[n] == cur[n] for n in POOL_OUTPUTS))
+        for n in outputs:
+            assert current[n] == expected[n], (label + " replaced", n, expected[n], current[n])
+        return current
+
+    result["coordinated_set"] = set_each(probes, "coordinated-set")
+    # A decode on the control pings every output: one idle load pass before the reload.
+    before = daemon.current()[control]
+    daemon.cli("next", control)
+    current, _ = daemon.wait("control-decode", lambda cur, drawn: cur[control] != before
+                             and drawn[control] == cur[control]
+                             and all(cur[n] == p for n, p in zip(outputs, probes)))
+    daemon.save(config("c"))
+    daemon.wait("reload-applied", lambda cur, drawn: cur[control] in c
+                and drawn[control] == cur[control])
+    time.sleep(2.5)
+    current, drawn = daemon.wait("after-reload", lambda cur, drawn: all(
+        drawn[n] == cur[n] for n in POOL_OUTPUTS))
+    result["after_reload"] = current
+    for n, probe in zip(outputs, probes):
+        assert current[n] == probe, ("forced image replaced by reload", n, probe, current[n])
+    status = daemon.status()
+    assert all(status[n]["status"] == "paused" for n in POOL_OUTPUTS), status
+
+    # Leaving the detour adopts the new pool; the reset history then starts there.
+    for action in ("next", "next", "previous"):
+        prior = daemon.current()
+        daemon.cli(action, *outputs)
+        current, _ = daemon.wait(action + "-in-pool-c", lambda cur, drawn: all(
+            cur[n] != prior[n] and drawn[n] == cur[n] for n in outputs))
+        assert all(current[n] in c for n in outputs), (action + " left pool C", prior, current)
+    # At the start of the new history, previous stays put instead of returning to B or a probe.
+    daemon.cli("previous", *outputs)
+    time.sleep(.6)
+    later, _ = daemon.wait("history-start", lambda cur, drawn: all(
+        drawn[n] == cur[n] for n in outputs))
+    assert all(later[n] == current[n] for n in outputs), ("previous left the new history", current, later)
+    result["after_navigation"] = current
+    result["final_set"] = set_each(finals, "final-set")
+    daemon.cli("resume", *POOL_OUTPUTS)
+    time.sleep(.3)
+    status = daemon.status()
+    assert all(status[n]["status"] == "running" for n in POOL_OUTPUTS), status
+
+
+def group_set_reload(daemon, result):
+    """Grouped outputs keep set parity and move into a new pool together (#2).
+
+    Virtual-0..2 share group 1; Virtual-3 is ungrouped. A set on a grouped output holds only
+    until any output decodes an image: that load pass hands the output the group's shared image
+    back. This is pre-existing (measured on 2cde3d9 and c397225; the same get_image_path arm is
+    in upstream 483225a) and pinned here as parity; the fix for wpaperd #18 must update it. Distinct
+    per-output sets inside one group are therefore timing dependent and not asserted.
+    """
+    b, c = daemon.files("b"), daemon.files("c")
+    probes = daemon.files("probe")
+    grouped, control = POOL_OUTPUTS[:3], POOL_OUTPUTS[3]
+    def config(pool):
+        return ('[default]\npath=' + json.dumps(str(daemon.pool(pool))) + '\nmode="stretch"\n'
+                'duration="2s"\ntransition-time=0\ninitial-transition=false\n' +
+                ''.join('[' + n + ']\ngroup=1\n' for n in grouped))
+
+    def coordinated(pool):
+        def check(cur, drawn):
+            return (all(cur[n] in pool and drawn[n] == cur[n] for n in POOL_OUTPUTS)
+                    and len({cur[n] for n in grouped}) == 1)
+        return check
+
+    daemon.start(config("b"))
+    daemon.wait("initial", coordinated(b))
+    daemon.cli("pause", *POOL_OUTPUTS)
+
+    # One grouped set with no later decode holds.
+    daemon.cli("set", probes[0], grouped[0])
+    daemon.wait("group-set", lambda cur, drawn: cur[grouped[0]] == drawn[grouped[0]] == probes[0])
+    time.sleep(2.5)
+    current, _ = daemon.wait("group-set-held", lambda cur, drawn: all(
+        drawn[n] == cur[n] for n in POOL_OUTPUTS))
+    assert current[grouped[0]] == probes[0], ("grouped set not held", current)
+    shared = current[grouped[1]]
+    assert all(current[n] == shared for n in grouped[1:]), current
+
+    # Pinned pre-existing behavior: a decode on another output returns the shared image.
+    before = current[control]
+    daemon.cli("next", control)
+    current, _ = daemon.wait("group-set-taken-back", lambda cur, drawn: (
+        cur[control] in b and cur[control] != before
+        and all(cur[n] == shared and drawn[n] == shared for n in grouped)))
+    result["group_set_taken_back_by_other_decode"] = True
+
+    # The reload moves the whole group and the control into the new pool, still coordinated.
+    daemon.save(config("c"))
+    current, _ = daemon.wait("group-reload-applied", coordinated(c))
+    result["after_reload"] = current
+    time.sleep(2.5)
+    later, _ = daemon.wait("group-after-reload", coordinated(c))
+    assert later == current, ("paused group changed after reload", current, later)
+    status = daemon.status()
+    assert all(status[n]["status"] == "paused" for n in POOL_OUTPUTS), status
+
+    for action in ("next", "next", "previous"):
+        prior = current
+        daemon.cli(action, *grouped)
+        current, _ = daemon.wait(action + "-group-in-pool-c", lambda cur, drawn: (
+            coordinated(c)(cur, drawn) and all(cur[n] != prior[n] for n in grouped)))
+    result["after_navigation"] = current
+    daemon.cli("resume", *POOL_OUTPUTS)
+    time.sleep(.3)
+    status = daemon.status()
+    assert all(status[n]["status"] == "running" for n in POOL_OUTPUTS), status
+
+
+POOL_SCENARIOS = {"pause-reload": pause_reload, "set-reload": set_reload,
+                  "group-set-reload": group_set_reload}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binaries", type=Path, default=Path("target/debug"))
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument("--producer-package", type=Path,
                         help="Published bundle for the exact two-output nested layout; copied only")
-    parser.add_argument("--scenario", choices=("scene", "transition-reload"), default="scene",
-                        help="transition-reload rewrites transitions during four-output changes")
+    parser.add_argument("--scenario", choices=("scene", "transition-reload", *POOL_SCENARIOS),
+                        default="scene",
+                        help="transition-reload rewrites transitions during four-output changes; "
+                             "pause-reload, set-reload and group-set-reload change the pool "
+                             "under pause, set and grouped outputs")
     parser.add_argument("--inside", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     args.binaries, args.repo = args.binaries.resolve(), args.repo.resolve()
     if args.producer_package:
         args.producer_package = args.producer_package.resolve()
     if args.inside:
-        (transition_reload if args.scenario == "transition-reload" else inside)(args)
+        if args.scenario in POOL_SCENARIOS:
+            pool_scenario(args, POOL_SCENARIOS[args.scenario])
+        else:
+            (transition_reload if args.scenario == "transition-reload" else inside)(args)
         return
     for tool in ("kwin_wayland", "dbus-run-session"):
         assert shutil.which(tool), "Missing dependency: " + tool
@@ -727,7 +1095,7 @@ def main():
         command += ["--producer-package", str(args.producer_package)]
     process = subprocess.Popen(command, env=env, start_new_session=True)
     try:
-        code = process.wait(timeout=90)
+        code = process.wait(timeout=180 if args.scenario in POOL_SCENARIOS else 90)
         assert code == 0, "Private test failed; inspect " + str(root)
     finally:
         stop_owned(process)
