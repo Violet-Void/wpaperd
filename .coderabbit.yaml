@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+early_access: false
+enable_free_tier: true
+tone_instructions: "Be concise and practical. Lead with the defect, its concrete impact, and the smallest fix. Separate verified findings from uncertainty. Avoid praise, repeated summaries, and style-only nitpicks."
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  allow_author_approval: false
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  changed_files_summary: true
+  collapse_walkthrough: true
+  review_status: true
+  review_details: true
+  review_progress: true
+  poem: false
+  in_progress_fortune: false
+  enable_prompt_for_ai_agents: true
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 2
+    ignore_title_keywords:
+      - WIP
+      - "[skip review]"
+      - "[no review]"
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: true
+    simplify:
+      enabled: false
+    autofix:
+      enabled: true
+    fix_ci:
+      enabled: true
+    resolve_merge_conflict:
+      enabled: true
+  path_instructions:
+    - path: "**/*"
+      instructions: >-
+        Follow applicable repository and nested AGENTS.md instructions.
+        Report actionable defects with concrete failure scenarios. Prioritize
+        correctness, security, data loss and regressions. Verify assumptions
+        against callers, configuration and tests before raising findings.
+        Rust Wayland wallpaper daemon, CLI and IPC workspace. Review daemon resource lifetime, output hotplug, multi-monitor state, rendering transitions and IPC compatibility. Preserve bounded memory and reliable cleanup on errors. Treat image paths and IPC requests as untrusted. Check Rust workspace tests and feature/build compatibility; static checks do not prove compositor-specific behavior. Keep this fork's changes compatible with documented upstream behavior and explicit local extensions.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Check event trust boundaries, untrusted PR inputs, token permissions,
+        secrets exposure and self-hosted runner isolation. Do not recommend
+        executing fork-controlled code in a privileged pull_request_target job.
+        Preserve required checks and existing runner-routing policy.
+chat:
+  art: false
+  auto_reply: true
+  allow_non_org_members: false
+knowledge_base:
+  code_guidelines:
+    enabled: true
+  mcp:
+    usage: auto
