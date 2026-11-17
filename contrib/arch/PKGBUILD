@@ -51,15 +51,21 @@ package() {
 	install -Dm755 target/release/wpaperd "${pkgdir}/usr/bin/wpaperd"
 	install -Dm755 target/release/wpaperctl "${pkgdir}/usr/bin/wpaperctl"
 
+	# Cargo 1.100 adds a directory level under target/release/build for OUT_DIR.
+	local artifacts=target/release
+	if [[ -d "${artifacts}/build/completions" ]]; then
+		artifacts+=/build
+	fi
+
 	local bin
 	for bin in wpaperd wpaperctl; do
-		install -Dm644 "target/release/completions/${bin}.bash" \
+		install -Dm644 "${artifacts}/completions/${bin}.bash" \
 			"${pkgdir}/usr/share/bash-completion/completions/${bin}"
-		install -Dm644 "target/release/completions/_${bin}" \
+		install -Dm644 "${artifacts}/completions/_${bin}" \
 			"${pkgdir}/usr/share/zsh/site-functions/_${bin}"
-		install -Dm644 "target/release/completions/${bin}.fish" \
+		install -Dm644 "${artifacts}/completions/${bin}.fish" \
 			"${pkgdir}/usr/share/fish/vendor_completions.d/${bin}.fish"
-		install -Dm644 "target/release/man/${bin}.1" "${pkgdir}/usr/share/man/man1/${bin}.1"
+		install -Dm644 "${artifacts}/man/${bin}.1" "${pkgdir}/usr/share/man/man1/${bin}.1"
 	done
 	install -Dm644 man/wpaperd-output.5 "${pkgdir}/usr/share/man/man5/wpaperd-output.5"
 
